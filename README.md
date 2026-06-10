@@ -4,7 +4,7 @@ A comprehensive statistical analysis of MLB position player performance trends a
 
 ## Overview
 
-This project constructs aging curves for MLB position players using historical data from 1980 to 2024. By applying Generalized Additive Models (GAM) with Inverse Probability Weighting (IPW) to correct for survivorship bias, this analysis reveals how player performance metrics evolve with age, providing actionable insights for player evaluation, contract negotiations, and roster construction.
+This project constructs aging curves for MLB position players using historical data from 1980 to 2025. By applying Generalized Additive Models (GAM) with Inverse Probability Weighting (IPW) to correct for survivorship bias, this analysis reveals how player performance metrics evolve with age, providing actionable insights for player evaluation, contract negotiations, and roster construction.
 
 ## Key Findings
 
@@ -29,7 +29,7 @@ This project constructs aging curves for MLB position players using historical d
 ### Data Collection
 - **Source**: MLB statistics via pybaseball API
 - **Training Data**: 1980–2019 seasons
-- **Test Data**: 2021–2024 seasons
+- **Test Data**: 2021–2025 seasons
 - **Qualification**: Minimum 100 plate appearances per season
 - **Age Range**: Players aged 20–40
 
@@ -39,7 +39,7 @@ This project constructs aging curves for MLB position players using historical d
 - Features: age × experience tensor product, career mean (player talent control), lagged prior-season performance
 - Weighted by plate appearances (hitting metrics) or games played (Def, Spd, WAR)
 - Hyperparameters tuned via grid search over 20 log-spaced λ values
-- Evaluated on held-out 2021–2024 test seasons
+- Evaluated on held-out 2021–2025 test seasons
 
 #### 2. Survivorship Bias Correction (IPW)
 Standard datasets only include players who meet the 100 PA threshold, creating positive selection at older ages — only above-average players retain playing time. IPW corrects for this by upweighting player-seasons that are unlikely to be observed:
@@ -60,7 +60,7 @@ Separate models trained on top players to assess whether aging curves differ fro
 MLB_Position_Player_Aging_Analysis/
 ├── data/
 │   ├── hitter_train_data.csv    # Training dataset (1980-2019)
-│   ├── hitter_test_data.csv     # Test dataset (2021-2024)
+│   ├── hitter_test_data.csv     # Test dataset (2021-2025)
 │   └── outside_data.csv         # Additional data
 ├── fetch_data.ipynb             # Data collection and preprocessing
 ├── GAM.ipynb                    # GAM aging curves for all players
