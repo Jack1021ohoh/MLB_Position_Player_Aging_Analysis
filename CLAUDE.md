@@ -14,8 +14,7 @@ migrated onto it; see **Migration state** below for what has and hasn't moved.
 ## Commands
 
 ```bash
-uv venv --python 3.12 .venv
-uv pip install --python .venv/bin/python -e ".[dev,fetch,notebooks]"
+uv sync --all-extras                               # builds .venv from uv.lock
 
 .venv/bin/python -m pytest tests/ -q              # full regression suite (~45s)
 .venv/bin/python -m pytest tests/ -q -k IPW       # one group
@@ -28,8 +27,15 @@ uv pip install --python .venv/bin/python -e ".[dev,fetch,notebooks]"
 .venv/bin/mlb-aging fetch                          # re-download from FanGraphs (slow)
 ```
 
-The published results reproduce **exactly** on a modern stack (pandas 3.0.5, numpy 2.5.2,
-pygam 0.12.0, scikit-learn 1.9.0) — no pinning to old versions is needed.
+`uv.lock` pins the exact resolution and is committed deliberately: the regression suite asserts
+float equality to 1e-9, so an unpinned resolver update would be indistinguishable from a code
+regression. Run `uv lock --upgrade` to move dependencies forward, and expect to justify any test
+that moves as a result. `.python-version` pins the interpreter to 3.12; the lock is universal and
+also resolves for 3.11 (which selects an older numpy).
+
+The published results reproduce **exactly** on the locked stack (pandas 3.0.5, numpy 2.5.2,
+pygam 0.12.0, scikit-learn 1.9.0) — and did so on the pre-lock resolution too, so no pinning to
+old versions is needed.
 
 ## The reproduction contract
 
