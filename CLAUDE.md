@@ -50,15 +50,25 @@ Known defects are therefore *preserved on purpose*, each tagged `BUG-PRESERVED:`
    fitted G-weighted but scored PA-weighted. The fix is `eval_weight_col = weight_col`; it will
    move those three MAEs. `test_eval_weight_bug_is_still_preserved` guards this and should be
    deleted when it is fixed.
-2. **Career-mean leakage and asymmetry** (`features.py`, `add_career_mean`) — training rows get a
-   full-career weighted mean including the row's own season and later ones, while test rows get
-   the player's last training-season value via `generate_test_data`. The feature means different
-   things on each side.
-3. **Centering leakage** (`dataset.py`, `load_data`) — for centralized metrics the league mean is
+2. **Centering leakage** (`dataset.py`, `load_data`) — for centralized metrics the league mean is
    computed over the concatenated train+test frame, so test-season means feed training features.
 
-When fixing any of these, change the affected expectation in the same commit — never loosen a
+When fixing either of these, change the affected expectation in the same commit — never loosen a
 tolerance to make a fix pass.
+
+### Not a bug: the career mean
+
+`add_career_mean` produces a per-player constant used as a talent control. It is the **same value
+on both sides** — verified: 0 of 2312 training players have more than one value, and test rows
+receive that identical constant (max difference 0.0). The
+`.sort_values("Season").groupby("IDfg").last()` in `generate_test_data` is therefore a no-op way
+of selecting it, and the stale "expanding career mean" comment in `GAM.ipynb` / `GAM_top.ipynb`
+describes an implementation that no longer exists — `GAM_IPW.ipynb`'s comment is the accurate one.
+
+The one real property to keep in mind is that a row's own season is included in its own predictor
+(~20% of it at the median 5 rows per player). No test target leaks, so test scores are honest; the
+cost is that the career-mean/target relationship is stronger in training than at test. Leave-one-out
+or a shrunk estimate is the standard alternative, worth measuring before adopting.
 
 ## Architecture
 

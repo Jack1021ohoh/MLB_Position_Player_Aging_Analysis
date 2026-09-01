@@ -53,10 +53,19 @@ def add_lag(data: pd.DataFrame, col: str) -> pd.DataFrame:
 def add_career_mean(data: pd.DataFrame, col: str) -> pd.DataFrame:
     """Add ``<col>_career_mean``: the player's PA-weighted mean of ``col``.
 
-    BUG-PRESERVED: this is a *full* career mean over every row supplied, so a
-    player-season's own value -- and the values of their later seasons -- feed
-    the feature used to predict it. It is also asymmetric with the test set,
-    where :func:`generate_test_data` substitutes the last training-season value.
+    This is a talent control -- a per-player constant standing in for latent
+    quality, so the age terms are not left to absorb it. The value is identical
+    for every row of a player, in training and test alike; test rows receive
+    the same training-era constant via :func:`generate_test_data`.
+
+    MODELLING CHOICE, not a defect: the mean is taken over the player's whole
+    career, so a row's own season is included in the feature used to predict it
+    (~20% of it at the median 5 rows per player, more for short careers). No
+    test target leaks -- a test row's career mean is built from training
+    seasons only -- so test scores stay honest. The cost is that the
+    career-mean/target relationship is stronger in training than at test time.
+    Leave-one-out or a shrunk estimate is the standard alternative if that
+    generalization gap turns out to matter.
 
     Note this narrows the frame to a fixed column list, dropping anything else
     the caller had attached.
