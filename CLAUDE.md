@@ -43,23 +43,36 @@ The refactor is deliberately **bug-for-bug faithful**: `tests/test_regression.py
 age, peak value, test MAE and survival-model AUC transcribed from the notebooks' stored outputs,
 and all of them currently match to 1e-9.
 
-Known defects are therefore *preserved on purpose*, each tagged `BUG-PRESERVED:` at its site:
+One defect is *preserved on purpose*, tagged `BUG-PRESERVED:` at its site:
 
-1. **`evaluate()` scoring weight** (`metrics.py`, `MetricSpec.eval_weight_col`) — the notebooks
-   never passed `weight_col`, so its `'PA'` default applied to every metric. Def, Spd and WAR are
-   fitted G-weighted but scored PA-weighted. The fix is `eval_weight_col = weight_col`; it will
-   move those three MAEs. `test_eval_weight_bug_is_still_preserved` guards this and should be
-   deleted when it is fixed.
-2. **Centering leakage** (`dataset.py`, `load_data`) — for centralized metrics the league mean is
-   computed over the concatenated train+test frame, so test-season means feed training features.
+**`evaluate()` scoring weight** (`metrics.py`, `MetricSpec.eval_weight_col`) — the notebooks never
+passed `weight_col`, so its `'PA'` default applied to every metric. Def, Spd and WAR are fitted
+G-weighted but scored PA-weighted. Measured effect of using the matching weight:
 
-When fixing either of these, change the affected expectation in the same commit — never loosen a
-tolerance to make a fix pass.
+| metric | published (PA-weighted) | matching (G-weighted) | delta |
+|--------|------------------------|-----------------------|-------|
+| Def    | 4.7541                 | 4.7083                | −0.96% |
+| Spd    | 0.9862                 | 0.9940                | +0.80% |
+| WAR    | 1.4966                 | 1.4697                | −1.80% |
 
-### Not a bug: the career mean
+WAR's shift is roughly half the size of the 3.5% IPW improvement the README headlines, so this is
+worth fixing before those absolute numbers are quoted anywhere. The IPW *comparison* is unaffected
+— both arms are scored identically. The fix is `eval_weight_col = weight_col`;
+`test_eval_weight_bug_is_still_preserved` guards it and should be deleted when it lands, with the
+three MAE expectations updated in the same commit. Never loosen a tolerance to make a fix pass.
 
-`add_career_mean` produces a per-player constant used as a talent control. It is the **same value
-on both sides** — verified: 0 of 2312 training players have more than one value, and test rows
+### Not bugs — two claims that did not survive checking
+
+Both were initially recorded as defects and are wrong; do not "fix" them.
+
+**Centering is not leaky.** `centralize_data` groups by `Season`, and the splits occupy disjoint
+season ranges (1980–2019 vs 2021–2025), so every group lies wholly within one split. Centering the
+concatenated frame is identical to centering each split separately — verified to 0.0 across all
+18,840 rows. A player's own season does contribute to its own league mean, but that is inherent to
+centering and capped at ~0.5% of the mean by the ~428 players per season.
+
+**The career mean is a talent control, not leakage.** `add_career_mean` produces a per-player
+constant. It is the **same value on both sides** — verified: 0 of 2312 training players have more than one value, and test rows
 receive that identical constant (max difference 0.0). The
 `.sort_values("Season").groupby("IDfg").last()` in `generate_test_data` is therefore a no-op way
 of selecting it, and the stale "expanding career mean" comment in `GAM.ipynb` / `GAM_top.ipynb`
