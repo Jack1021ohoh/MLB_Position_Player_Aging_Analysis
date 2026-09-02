@@ -13,6 +13,7 @@ This project constructs aging curves for MLB position players using historical d
 - **Speed Peak**: Base running speed peaks at **age 21** and declines monotonically — the earliest peak of all metrics
 - **Overall Value Peak**: WAR contribution peaks around **age 25**, one year before hitting, due to the earlier decline of defense and speed
 - **Survivorship Bias**: IPW correction consistently improves predictive accuracy across all metrics, with the largest gain in WAR (3.5% MAE reduction)
+- **Gain over a Naive Baseline**: Measured against the delta method applied to each player's prior season, GAM + IPW reduces test MAE by **8.8% for OPS** and **7.4% for wRC+**. WAR gains 3.7% — almost all of it from the survivorship correction rather than the model itself. Def does not beat the baseline, and that is reported rather than hidden
 - **Elite Player Differences**: Top players (career WAR ≥ 2.5) peak in overall value one year later (age 26) and sustain hitting performance longer (wRC+ peak age 27)
 - **Decline Phase**: Significant performance decline begins after age 35 across all metrics
 
@@ -53,6 +54,23 @@ Standard datasets only include players who meet the 100 PA threshold, creating p
 Separate models trained on top players to assess whether aging curves differ from the general population:
 - **Hitting specialists**: career wRC+ ≥ 110
 - **Overall value**: career WAR ≥ 2.5
+
+#### 4. Baseline Comparison
+"The GAM improves accuracy" is meaningless without something to improve on, so the model is
+measured against the delta method — the standard naive approach, in which year-over-year changes
+are averaged by age (weighted by the harmonic mean of the two seasons' playing time) and
+accumulated into a curve.
+
+Three baselines are scored, on the identical test frame with identical sample weights so the
+comparison cannot drift through differing row sets:
+
+- **`persistence`**: predict last season unchanged, ignoring age entirely
+- **`delta_curve`**: the population curve's value at the player's age — one number per age, not personalized
+- **`delta_lag`**: last season plus the mean change for that age
+
+`delta_lag` is the reference the GAM is quoted against. It is the strongest of the three and the
+only one that sees the same information the GAM does — the player's prior season and their age.
+Quoting against a weaker arm would flatter the model.
 
 ## Project Structure
 
