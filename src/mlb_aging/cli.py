@@ -7,7 +7,7 @@ from pathlib import Path
 
 from mlb_aging.dataset import DEFAULT_DATA_DIR
 from mlb_aging.metrics import METRICS, get_metric
-from mlb_aging.pipeline import run_metric
+from mlb_aging.pipeline import REFERENCE_BASELINE, compare_baselines, run_metric
 
 
 def _add_data_dir(parser: argparse.ArgumentParser) -> None:
@@ -47,6 +47,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="career mean pinned when tracing the curve: a number, or 'train_mean'. "
              "Shifts the curve level only -- the peak age is unaffected.",
     )
+
+    baselines = sub.add_parser(
+        "baselines", help="score the naive ladder against both GAM arms"
+    )
+    _add_data_dir(baselines)
+    baselines.add_argument(
+        "--metric", action="append", choices=sorted(METRICS),
+        help="metric to compare (repeatable; default: all five)",
+    )
     return parser
 
 
@@ -69,6 +78,17 @@ def main(argv: list[str] | None = None) -> int:
         from mlb_aging.fetch import fetch_all
 
         fetch_all(args.data_dir)
+        return 0
+
+    if args.command == "baselines":
+        for name in args.metric or sorted(METRICS):
+            print(compare_baselines(get_metric(name), data_dir=args.data_dir).summary())
+            print()
+        print(
+            f"Improvements are quoted against '{REFERENCE_BASELINE}' -- last season plus the\n"
+            "mean age-adjustment. It is the strongest baseline and the only one seeing the\n"
+            "same information as the GAM. A negative number means the naive approach wins."
+        )
         return 0
 
     names = args.metric or sorted(METRICS)

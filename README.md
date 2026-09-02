@@ -77,6 +77,7 @@ MLB_Position_Player_Aging_Analysis/
 ├── GAM.ipynb                    # Aging curves for all players
 ├── GAM_top.ipynb                # Aging curves for elite players
 ├── GAM_IPW.ipynb                # IPW survivorship bias correction
+├── delta_method.ipynb           # Naive baseline the GAM is compared against
 ├── pyproject.toml
 ├── uv.lock                      # Exact pinned resolution
 └── README.md
@@ -101,6 +102,7 @@ reproduce exactly on pandas 3.0.5, numpy 2.5.2, pygam 0.12.0 and scikit-learn 1.
 
 ```bash
 .venv/bin/mlb-aging train                          # all five metrics
+.venv/bin/mlb-aging baselines                      # naive ladder vs both GAM arms
 .venv/bin/mlb-aging train --metric WAR --ipw       # survivorship-corrected
 .venv/bin/mlb-aging train --metric wRC+ --elite 110 --elite-test --curve-reference train_mean
 ```
@@ -112,6 +114,7 @@ reproduce exactly on pandas 3.0.5, numpy 2.5.2, pygam 0.12.0 and scikit-learn 1.
 | [GAM.ipynb](GAM.ipynb) | Aging curves for all five metrics on the full population |
 | [GAM_top.ipynb](GAM_top.ipynb) | Elite-player curves, compared against the general population |
 | [GAM_IPW.ipynb](GAM_IPW.ipynb) | IPW-corrected curves and the survivorship-bias impact per metric |
+| [delta_method.ipynb](delta_method.ipynb) | The naive delta-method baseline, and how much the GAM improves on it |
 
 Point the notebook kernel at the project venv, then run top to bottom.
 
@@ -156,6 +159,39 @@ leaving every peak age and peak value untouched. `mlb-aging train` reports both.
 | Def    | 23       | 4.66     | −2.0%           |
 | Spd    | 21       | 0.981    | −0.5%           |
 | WAR    | 25       | 1.45     | −3.5%           |
+
+### Improvement over a Naive Baseline
+
+Aging-curve accuracy needs a denominator. Every arm below is scored on the identical
+887-row test frame with identical weights, so the numbers are directly comparable.
+
+| Model | Prediction |
+|---|---|
+| `persistence` | last season, unchanged — ignores age |
+| `delta_curve` | the delta method's population curve at the player's age — not personalized |
+| `delta_lag` | last season **plus** the mean change for that age |
+
+`delta_lag` is the reference: it is the strongest baseline and the only one that sees the
+same information as the GAM.
+
+| Metric | delta_lag | GAM | GAM + IPW |
+|--------|-----------|-----|-----------|
+| OPS    | 0.0812    | **+7.5%** | **+8.8%** |
+| wRC+   | 21.03     | **+6.2%** | **+7.4%** |
+| Spd    | 1.023     | +3.6%     | +4.1%     |
+| WAR    | 1.500     | +0.2%     | **+3.7%** |
+| Def    | 4.532     | −4.9%     | −2.8%     |
+
+Three honest caveats belong with these numbers:
+
+- **Def loses to the naive baseline.** This holds under either weighting (−4.7% / −2.4%
+  G-weighted). It does not invalidate the defensive aging curve: individual-season MAE and
+  population curve *shape* are different targets, and season-to-season defensive value is
+  volatile enough that "last year, age-adjusted" is hard to beat one player-season at a time.
+- **WAR's gain is almost entirely IPW,** not the GAM — the strongest single piece of evidence
+  for the survivorship correction in this project.
+- **Persistence alone is within ~1.5% of `delta_lag` everywhere.** Most apparent accuracy on
+  this task is simply that last season predicts this season.
 
 ### Elite Players (career WAR ≥ 2.5)
 

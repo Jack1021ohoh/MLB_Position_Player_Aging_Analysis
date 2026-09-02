@@ -13,12 +13,15 @@ import pytest
 from mlb_aging.dataset import build_training_frame, load_data
 from mlb_aging.ipw import evaluate_retirement_model
 from mlb_aging.metrics import ELITE_WAR_THRESHOLD, ELITE_WRC_THRESHOLD, get_metric
-from mlb_aging.pipeline import run_metric
+from mlb_aging.pipeline import compare_baselines, run_metric
 
 # Peak ages and MAEs are exact floats from `execute_result` cells, so they are
 # compared tightly. Values printed with `:.4f` get a rounding-width tolerance.
 EXACT = 1e-9
 PRINTED = 5e-5
+
+#: Rows surviving generate_test_data -- shared by every arm of every comparison.
+N_TEST = 887
 
 
 # --- GAM.ipynb: all players ------------------------------------------------
@@ -170,3 +173,77 @@ def test_both_scoring_weights_are_reported(metric):
         # PA-weighted metrics score identically under either weight
         assert spec.weight_col == spec.eval_weight_col
         assert result.test_mae_fit_weighted == pytest.approx(result.test_mae, abs=EXACT)
+
+
+# --- delta_method.ipynb: the naive ladder -----------------------------------
+# Scored on the same frame run_metric uses, so these are directly comparable to
+# ALL_PLAYERS and IPW_RESULTS above. metric -> {baseline: eval-weighted MAE}
+BASELINE_MAE = {
+    "OPS":  {"persistence": 0.0823575147776609,
+             "delta_curve": 0.08467877637307515,
+             "delta_lag":   0.08124777286831522},
+    "wRC+": {"persistence": 21.317703824821262,
+             "delta_curve": 22.543944608639222,
+             "delta_lag":   21.02688893945524},
+    "Def":  {"persistence": 4.5880660019450055,
+             "delta_curve": 6.594079119564908,
+             "delta_lag":   4.531911222384779},
+    "Spd":  {"persistence": 1.027493507742618,
+             "delta_curve": 1.355467067253739,
+             "delta_lag":   1.0230182287413296},
+    "WAR":  {"persistence": 1.525558921911235,
+             "delta_curve": 1.6644038478289973,
+             "delta_lag":   1.4998261855925554},
+}
+
+# The delta method's own curve peaks, and the number of consecutive-season
+# pairs it is estimated from (identical across metrics -- same row set).
+DELTA_PEAK_AGE = {"OPS": 26.0, "wRC+": 26.0, "Def": 24.0, "Spd": 22.0, "WAR": 26.0}
+DELTA_N_PAIRS = 11324
+
+#: Where the GAM arms land against the strongest baseline. Def is negative on
+#: purpose: the naive predictor genuinely wins there, and that must not be
+#: quietly "fixed" away.
+GAM_VS_DELTA_LAG = {
+    "OPS":  (0.07504882959414927,   0.08848701103718748),
+    "wRC+": (0.062372759172296455,  0.07411779979554689),
+    "Def":  (-0.04903314129840708, -0.027790196906223752),
+    "Spd":  (0.03603755029636735,   0.040747284416618346),
+    "WAR":  (0.0021625230879813717, 0.03660378527075736),
+}
+
+
+@pytest.mark.parametrize("metric", sorted(BASELINE_MAE))
+def test_naive_baselines(metric):
+    comparison = compare_baselines(get_metric(metric))
+
+    for name, expected in BASELINE_MAE[metric].items():
+        assert comparison.maes[name][0] == pytest.approx(expected, abs=EXACT), name
+
+    assert comparison.delta_curve.peak_age == DELTA_PEAK_AGE[metric]
+    assert comparison.delta_curve.n_pairs == DELTA_N_PAIRS
+    assert comparison.n_test == N_TEST
+
+
+@pytest.mark.parametrize("metric", sorted(GAM_VS_DELTA_LAG))
+def test_gam_improvement_over_delta_lag(metric):
+    """Pin how much the GAM arms beat the strongest naive baseline.
+
+    These are the numbers any "GAM + IPW improves accuracy by X" claim rests
+    on, so they are pinned rather than recomputed by hand each time.
+    """
+    comparison = compare_baselines(get_metric(metric))
+    expected_gam, expected_ipw = GAM_VS_DELTA_LAG[metric]
+
+    assert comparison.improvement("gam") == pytest.approx(expected_gam, abs=EXACT)
+    assert comparison.improvement("gam_ipw") == pytest.approx(expected_ipw, abs=EXACT)
+
+    # The GAM arms must be scored on the same frame as the baselines.
+    assert comparison.maes["gam"][0] == pytest.approx(ALL_PLAYERS[metric][2], abs=EXACT)
+
+
+def test_delta_method_ladder_is_ordered_as_documented():
+    """delta_lag is the strongest baseline for every metric."""
+    for metric in sorted(BASELINE_MAE):
+        maes = BASELINE_MAE[metric]
+        assert maes["delta_lag"] < maes["persistence"] < maes["delta_curve"], metric

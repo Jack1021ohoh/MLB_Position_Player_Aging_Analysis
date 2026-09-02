@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from mlb_aging.baselines import DeltaCurve, run_baselines
 from mlb_aging.dataset import DEFAULT_DATA_DIR, build_training_frame, load_data
 from mlb_aging.evaluate import evaluate
 from mlb_aging.features import generate_test_data
@@ -194,4 +195,71 @@ def compare_ipw(
             frame, weight_col=spec.weight_col, perf_col=spec.lag_col
         ),
         p_survive_by_age=fit_ipw_weights(frame, spec).groupby("Age")["p_survive"].mean(),
+    )
+
+
+#: Order of the ladder, weakest first. ``delta_lag`` is the reference the GAM
+#: arms are quoted against: it is the strongest baseline, and the only one that
+#: sees the same information the GAM does (the player's prior season plus age).
+LADDER = ("persistence", "delta_curve", "delta_lag", "gam", "gam_ipw")
+REFERENCE_BASELINE = "delta_lag"
+
+
+@dataclass
+class BaselineComparison:
+    """The naive baselines and the GAM arms, scored on one shared test frame."""
+
+    spec: MetricSpec
+    #: name -> (eval-weighted MAE, fit-weighted MAE), in :data:`LADDER` order.
+    maes: dict[str, tuple[float, float]]
+    delta_curve: DeltaCurve
+    n_test: int
+
+    def improvement(self, name: str, reference: str = REFERENCE_BASELINE) -> float:
+        """Fractional MAE reduction of ``name`` against ``reference``.
+
+        Positive means better than the baseline. Negative means the naive
+        approach wins, which is a real outcome for some metrics -- individual
+        season MAE and population curve shape are different targets.
+        """
+        return 1.0 - self.maes[name][0] / self.maes[reference][0]
+
+    def summary(self) -> str:
+        head = (
+            f"{self.spec.name}  (n_test={self.n_test}, "
+            f"scored {self.spec.eval_weight_col}-weighted)\n"
+            f"  {'model':14s} {'MAE':>9s} {'vs ' + REFERENCE_BASELINE:>14s}"
+        )
+        rows = []
+        for name in LADDER:
+            mae = self.maes[name][0]
+            gap = "—" if name == REFERENCE_BASELINE else f"{self.improvement(name):+.1%}"
+            rows.append(f"  {name:14s} {mae:9.4f} {gap:>14s}")
+        return "\n".join([head, *rows])
+
+
+def compare_baselines(
+    spec: MetricSpec, data_dir: Path | str = DEFAULT_DATA_DIR
+) -> BaselineComparison:
+    """Score the naive ladder and both GAM arms on the same test frame.
+
+    Every arm is scored by :func:`~mlb_aging.baselines.score` or
+    :func:`~mlb_aging.evaluate.evaluate` on the frame
+    :func:`~mlb_aging.features.generate_test_data` produces, so the comparison
+    cannot drift through differing row sets -- the flaw that made
+    ``delta_method.ipynb``'s numbers incomparable to the GAM's.
+    """
+    baselines, curve = run_baselines(spec, data_dir=data_dir)
+    gam = run_metric(spec, data_dir=data_dir)
+    gam_ipw = run_metric(spec, data_dir=data_dir, ipw=True)
+
+    maes = {name: (r.test_mae, r.test_mae_fit_weighted) for name, r in baselines.items()}
+    maes["gam"] = (gam.test_mae, gam.test_mae_fit_weighted)
+    maes["gam_ipw"] = (gam_ipw.test_mae, gam_ipw.test_mae_fit_weighted)
+
+    return BaselineComparison(
+        spec=spec,
+        maes={name: maes[name] for name in LADDER},
+        delta_curve=curve,
+        n_test=gam.n_test,
     )

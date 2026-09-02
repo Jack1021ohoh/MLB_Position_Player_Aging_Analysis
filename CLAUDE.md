@@ -16,11 +16,12 @@ migrated onto it; see **Migration state** below for what has and hasn't moved.
 ```bash
 uv sync --all-extras                               # builds .venv from uv.lock
 
-.venv/bin/python -m pytest tests/ -q              # full regression suite, 22 tests (~50s)
+.venv/bin/python -m pytest tests/ -q              # full regression suite, 38 tests (~2min)
 .venv/bin/python -m pytest tests/ -q -k IPW       # one group
 .venv/bin/python -m pytest tests/test_regression.py::test_all_player_curves -q
 
 .venv/bin/mlb-aging train                          # all five metrics
+.venv/bin/mlb-aging baselines                      # naive ladder vs both GAM arms
 .venv/bin/mlb-aging train --metric WAR --ipw       # survivorship-corrected
 .venv/bin/mlb-aging train --metric wRC+ --elite 110 --elite-test --curve-reference train_mean
 .venv/bin/mlb-aging train --metric Def --elite 2.5 --cohort-metric WAR --curve-reference train_mean
@@ -160,6 +161,38 @@ identical row ordering; the id-based version is verified equivalent by the regre
 shapes: a model trained and scored on everyone, the same model scored only on elites (this is
 where wRC+ 19.72 → 20.47 comes from), and a specialist model trained and scored on elites.
 
+### Baselines give the improvement claims a denominator
+
+`baselines.py` scores a ladder on **exactly** the frame `run_metric` scores, with the same
+weights: `persistence` (last season unchanged) → `delta_curve` (the population curve as
+everyone's prediction) → `delta_lag` (last season plus the age adjustment) → `gam` → `gam_ipw`.
+`pipeline.compare_baselines` assembles all five.
+
+`delta_lag` is the reference (`REFERENCE_BASELINE`) because it is the strongest naive arm and
+the only one seeing what the GAM sees. Improvements against it:
+
+| metric | gam | gam + ipw |
+|--------|-----|-----------|
+| OPS    | +7.5% | +8.8% |
+| wRC+   | +6.2% | +7.4% |
+| Spd    | +3.6% | +4.1% |
+| WAR    | +0.2% | +3.7% |
+| Def    | **−4.9%** | **−2.8%** |
+
+**Def losing is a real result, not a bug** — `test_gam_improvement_over_delta_lag` pins the
+negative numbers so they cannot be quietly tuned away. It holds under G weighting too
+(−4.7% / −2.4%). Individual-season MAE and population curve *shape* are different targets;
+the defensive curve can still be the better shape estimate. WAR's split matters too: the GAM
+alone is a coin flip, so essentially all of WAR's gain is the survivorship correction. And
+plain `persistence` is within ~1.5% of `delta_lag` everywhere — most apparent accuracy on this
+task is just "last season predicts this season."
+
+The old `delta_method.ipynb` numbers (OPS 0.0876, wRC+ 22.47) were **not** comparable to the
+GAM's: a 1038-row test frame instead of 887, ages ≥21 instead of ≥20, a population value as
+every player's prediction, and a `centralize_data` lambda that closed over the global
+`train_data` so test-season league means were weighted by *training* rows' PA (~0.027 OPS low).
+Don't resurrect them.
+
 ### Notebook-facing helpers
 
 `pipeline.compare_ipw` fits a metric both ways and returns an `IPWComparison` carrying both
@@ -175,7 +208,8 @@ notebooks show, so their format lives in one place.
 - **The notebooks now import `mlb_aging`.** `GAM.ipynb` (87 → 17 cells), `GAM_top.ipynb`
   (108 → 21) and `GAM_IPW.ipynb` (39 → 20) hold narrative, one call per section, and plots. The
   duplicated helper block is gone, so there is one implementation and it is the tested one.
-- **Not yet done:** `delta_method.ipynb`, a superseded delta-method baseline, has not been ported.
+- `delta_method.ipynb` (30 -> 9 cells) is now the baseline comparison, not a superseded
+  alternative: it is what the GAM's improvement claims are measured against.
 - `data/outside_data.csv` has a different FanGraphs-export schema and is unused.
 
 ### The fetch stage does not work
