@@ -20,7 +20,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="mlb-aging", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    fetch = sub.add_parser("fetch", help="download batting data from FanGraphs")
+    fetch = sub.add_parser(
+        "fetch",
+        help="[DOES NOT WORK] re-download from FanGraphs -- blocked since April 2026",
+        description="Kept because it documents the query that produced the committed "
+                    "CSVs. FanGraphs is behind a Cloudflare bot challenge and pybaseball "
+                    "is unmaintained; this will fail with FanGraphsUnavailable.",
+    )
     _add_data_dir(fetch)
 
     train = sub.add_parser("train", help="fit aging curves and report peak age / test MAE")
@@ -75,9 +81,13 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
     if args.command == "fetch":
-        from mlb_aging.fetch import fetch_all
+        from mlb_aging.fetch import FanGraphsUnavailable, fetch_all
 
-        fetch_all(args.data_dir)
+        try:
+            fetch_all(args.data_dir)
+        except FanGraphsUnavailable as exc:
+            # An explanation beats a traceback; the cause is known and permanent.
+            raise SystemExit(str(exc)) from None
         return 0
 
     if args.command == "baselines":

@@ -25,7 +25,7 @@ uv sync --all-extras                               # builds .venv from uv.lock
 .venv/bin/mlb-aging train --metric WAR --ipw       # survivorship-corrected
 .venv/bin/mlb-aging train --metric wRC+ --elite 110 --elite-test --curve-reference train_mean
 .venv/bin/mlb-aging train --metric Def --elite 2.5 --cohort-metric WAR --curve-reference train_mean
-.venv/bin/mlb-aging fetch                          # re-download from FanGraphs (slow)
+.venv/bin/mlb-aging fetch                          # BROKEN -- FanGraphs blocked, see below
 ```
 
 `uv.lock` pins the exact resolution and is committed deliberately: the regression suite asserts

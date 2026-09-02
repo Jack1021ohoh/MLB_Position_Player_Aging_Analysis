@@ -28,11 +28,16 @@ This project constructs aging curves for MLB position players using historical d
 ## Methodology
 
 ### Data Collection
-- **Source**: MLB statistics via pybaseball API
+- **Source**: FanGraphs, via the pybaseball API — last successfully fetched **2026-03-17**
 - **Training Data**: 1980–2019 seasons
 - **Test Data**: 2021–2025 seasons
 - **Qualification**: Minimum 100 plate appearances per season
 - **Age Range**: Players aged 20–40
+
+> **The fetch step no longer runs.** FanGraphs placed the site behind a Cloudflare bot challenge
+> in April 2026 and pybaseball is unmaintained; see [Data collection](#data-collection) below.
+> The committed CSVs reproduce every result here exactly, so this blocks refreshing the data,
+> not reproducing the analysis.
 
 ### Statistical Approaches
 
@@ -144,11 +149,28 @@ Point the notebook kernel at the project venv, then run top to bottom.
 
 ### Data collection
 
-The committed CSVs are what every result above is computed from. Refreshing them is
-currently **not possible**: FanGraphs placed the site behind a Cloudflare bot challenge in
-April 2026, which blocks all automated requests, and `pybaseball` has been unmaintained
-since 2023. `src/mlb_aging/fetch.py` and [fetch_data.ipynb](fetch_data.ipynb) are kept
-because they document the exact query that produced the data.
+The committed CSVs are what every result above is computed from. **Refreshing them is not
+currently possible**, for two independent reasons:
+
+1. **FanGraphs is behind a Cloudflare bot challenge**, added around April 2026. Every path
+   returns HTTP 403 with `cf-mitigated: challenge` — the retired `leaders-legacy.aspx` endpoint
+   pybaseball uses, their modern JSON API, and the homepage alike. Browser headers do not get
+   past it; neither does a residential IP, nor Google Colab.
+2. **`pybaseball` is unmaintained.** 2.2.7 (September 2023) is the newest release *and* GitHub
+   master still targets the retired endpoint, so installing from git changes nothing. Its
+   maintainers reached the same conclusion in
+   [issue #507](https://github.com/jldbc/pybaseball/issues/507).
+
+`src/mlb_aging/fetch.py` and [fetch_data.ipynb](fetch_data.ipynb) are kept because they document
+the exact query that produced the data. Running `mlb-aging fetch` fails with a
+`FanGraphsUnavailable` error explaining this rather than a bare HTTP traceback.
+
+**If you need newer data**, `pybaseball.bwar_bat()` still works — a single bulk file from
+Baseball-Reference covering 1871–2026 with WAR, the components of Def (`runs_defense` +
+`runs_position`) and `OPS_plus`. Retrosheet's `retrosplits` supplies the counting stats that OPS
+and Speed Score are computed from. wRC+ is the one metric with no direct substitute, since it
+requires FanGraphs' own linear-weight constants. Note that any re-fetch produces a *different
+dataset* and so cannot reproduce the numbers above.
 
 ## Results Summary
 
