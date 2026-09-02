@@ -28,6 +28,9 @@ class AgingResult:
     test_mae: float
     n_train: int
     n_test: int
+    #: The same predictions scored under the *fit* weight instead of
+    #: ``eval_weight_col``. Equal to ``test_mae`` when the two agree.
+    test_mae_fit_weighted: float = float("nan")
 
     @property
     def peak_age(self) -> float:
@@ -38,12 +41,19 @@ class AgingResult:
         return self.curve.peak_value
 
     def summary(self) -> str:
-        return (
+        line = (
             f"{self.spec.name}: peak age {self.peak_age:.2f}  |  "
             f"peak value {self.peak_value:.4f}  |  "
             f"test MAE {self.test_mae:.4f}  "
             f"(n_train={self.n_train}, n_test={self.n_test})"
         )
+        if self.spec.eval_weight_col != self.spec.weight_col:
+            line += (
+                f"\n  scored {self.spec.eval_weight_col}-weighted; "
+                f"{self.spec.weight_col}-weighted (matching the fit) would be "
+                f"{self.test_mae_fit_weighted:.4f}"
+            )
+        return line
 
 
 def cohort_ids(
@@ -123,6 +133,7 @@ def run_metric(
         spec=spec,
         curve=curve,
         test_mae=evaluate(test_df, spec, gam),
+        test_mae_fit_weighted=evaluate(test_df, spec, gam, weight_col=spec.weight_col),
         n_train=len(train_df),
         n_test=len(test_df),
     )

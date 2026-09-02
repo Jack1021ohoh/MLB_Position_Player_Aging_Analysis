@@ -141,6 +141,12 @@ because they document the exact query that produced the data.
 | Spd    | 21       | 0.986    |
 | WAR    | 25       | 1.50     |
 
+Test MAE is PA-weighted throughout. Def, Spd and WAR are *fitted* G-weighted, since both
+metrics accrue over games played rather than plate appearances; re-scoring them G-weighted
+gives 4.71, 0.994 and 1.47 respectively. The two weightings answer different questions — which
+observations are reliable, versus which errors matter — and the choice moves MAE by 1–2% while
+leaving every peak age and peak value untouched. `mlb-aging train` reports both.
+
 ### IPW-Corrected (Survivorship Bias Adjustment)
 
 | Metric | Peak Age | Test MAE | MAE Improvement |

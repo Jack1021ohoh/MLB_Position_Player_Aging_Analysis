@@ -133,14 +133,40 @@ def test_all_player_model_scored_on_elite_test(metric):
     assert result.test_mae == pytest.approx(mae, abs=EXACT)
 
 
-def test_eval_weight_bug_is_still_preserved():
-    """Guard the deliberately-preserved scoring bug.
+# The G-weighted alternative for the metrics whose fit and eval weights differ.
+# Reported alongside test_mae so the weighting choice needs no argument.
+FIT_WEIGHTED_MAE = {"Def": 4.708312735637497, "Spd": 0.9940013823141102,
+                    "WAR": 1.4696828199425542}
 
-    Def, Spd and WAR are fitted G-weighted but scored PA-weighted, because the
-    notebooks never passed ``weight_col`` to ``evaluate()``. When that is
-    fixed, this test should be deleted and the MAE expectations updated.
+
+def test_scoring_weight_is_pinned_deliberately():
+    """Def, Spd and WAR are fitted G-weighted and scored PA-weighted.
+
+    Not a defect: the fit weight is about which observations are reliable, the
+    eval weight about which errors matter. This pins the choice so it stays a
+    decision rather than reverting to ``evaluate()``'s default.
     """
     for metric in ("Def", "Spd", "WAR"):
         spec = get_metric(metric)
         assert spec.weight_col == "G"
         assert spec.eval_weight_col == "PA"
+
+    for metric in ("OPS", "wRC+"):
+        spec = get_metric(metric)
+        assert spec.weight_col == spec.eval_weight_col == "PA"
+
+
+@pytest.mark.parametrize("metric", sorted(ALL_PLAYERS))
+def test_both_scoring_weights_are_reported(metric):
+    result = run_metric(get_metric(metric))
+    spec = result.spec
+
+    if metric in FIT_WEIGHTED_MAE:
+        assert result.test_mae_fit_weighted == pytest.approx(
+            FIT_WEIGHTED_MAE[metric], abs=EXACT
+        )
+        assert result.test_mae_fit_weighted != result.test_mae
+    else:
+        # PA-weighted metrics score identically under either weight
+        assert spec.weight_col == spec.eval_weight_col
+        assert result.test_mae_fit_weighted == pytest.approx(result.test_mae, abs=EXACT)

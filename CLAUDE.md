@@ -43,27 +43,32 @@ The refactor is deliberately **bug-for-bug faithful**: `tests/test_regression.py
 age, peak value, test MAE and survival-model AUC transcribed from the notebooks' stored outputs,
 and all of them currently match to 1e-9.
 
-One defect is *preserved on purpose*, tagged `BUG-PRESERVED:` at its site:
+No defect is currently preserved. Never loosen a tolerance to make a change pass.
 
-**`evaluate()` scoring weight** (`metrics.py`, `MetricSpec.eval_weight_col`) — the notebooks never
-passed `weight_col`, so its `'PA'` default applied to every metric. Def, Spd and WAR are fitted
-G-weighted but scored PA-weighted. Measured effect of using the matching weight:
+### Not bugs — three claims that did not survive checking
 
-| metric | published (PA-weighted) | matching (G-weighted) | delta |
-|--------|------------------------|-----------------------|-------|
-| Def    | 4.7541                 | 4.7083                | −0.96% |
-| Spd    | 0.9862                 | 0.9940                | +0.80% |
-| WAR    | 1.4966                 | 1.4697                | −1.80% |
+All three were initially recorded as defects and are wrong; do not "fix" them.
 
-WAR's shift is roughly half the size of the 3.5% IPW improvement the README headlines, so this is
-worth fixing before those absolute numbers are quoted anywhere. The IPW *comparison* is unaffected
-— both arms are scored identically. The fix is `eval_weight_col = weight_col`;
-`test_eval_weight_bug_is_still_preserved` guards it and should be deleted when it lands, with the
-three MAE expectations updated in the same commit. Never loosen a tolerance to make a fix pass.
+**The scoring weight is a choice, not a mismatch.** Def, Spd and WAR are fitted G-weighted and
+scored PA-weighted (`metrics.py`, `MetricSpec.eval_weight_col`). Nothing requires the two to
+agree: the fit weight is a claim about which *observations* are reliable, the eval weight about
+which *errors* matter. It did arrive as `evaluate()`'s silent default — the notebooks never passed
+`weight_col` — so it is now pinned explicitly and both numbers are reported side by side
+(`AgingResult.test_mae_fit_weighted`, the CLI's `fit-wt MAE` column):
 
-### Not bugs — two claims that did not survive checking
+| metric | PA-weighted (published) | G-weighted (matches the fit) | delta |
+|--------|------------------------|------------------------------|-------|
+| Def    | 4.7541                 | 4.7083                       | −0.96% |
+| Spd    | 0.9862                 | 0.9940                       | +0.80% |
+| WAR    | 1.4966                 | 1.4697                       | −1.80% |
 
-Both were initially recorded as defects and are wrong; do not "fix" them.
+The argument *for* G — that Def and Spd accrue in the field, not at the plate, so PA discounts the
+defensive replacement and the pinch runner — is sound in principle but nearly inert here: the test
+set has no such players. `qual=100` filtered them out before the model sees them, PA/G runs 2.06
+at the 1st percentile to 4.56 at the 99th (a true defensive replacement is below 1.0), and
+switching schemes relocates only 6% of total weight mass. Peak ages and peak values are computed
+before scoring and are **completely independent** of this; only the MAE column moves. The IPW
+comparison is unaffected either way, since both arms are scored identically.
 
 **Centering is not leaky.** `centralize_data` groups by `Season`, and the splits occupy disjoint
 season ranges (1980–2019 vs 2021–2025), so every group lies wholly within one split. Centering the
@@ -75,8 +80,8 @@ centering and capped at ~0.5% of the mean by the ~428 players per season.
 constant. It is the **same value on both sides** — verified: 0 of 2312 training players have more than one value, and test rows
 receive that identical constant (max difference 0.0). The
 `.sort_values("Season").groupby("IDfg").last()` in `generate_test_data` is therefore a no-op way
-of selecting it, and the stale "expanding career mean" comment in `GAM.ipynb` / `GAM_top.ipynb`
-describes an implementation that no longer exists — `GAM_IPW.ipynb`'s comment is the accurate one.
+of selecting it. The notebooks used to carry a stale "expanding career mean" comment describing an
+implementation that no longer exists; it went with the rewrite.
 
 The one real property to keep in mind is that a row's own season is included in its own predictor
 (~20% of it at the median 5 rows per player). No test target leaks, so test scores are honest; the

@@ -72,7 +72,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     names = args.metric or sorted(METRICS)
-    header = f"{'metric':6s} {'peak':>6s} {'peak value':>12s} {'test MAE':>11s} {'n_train':>8s} {'n_test':>7s}"
+    header = (
+        f"{'metric':6s} {'peak':>6s} {'peak value':>12s} {'test MAE':>11s} "
+        f"{'fit-wt MAE':>11s} {'n_train':>8s} {'n_test':>7s}"
+    )
     print(header)
     print("-" * len(header))
 
@@ -86,11 +89,25 @@ def main(argv: list[str] | None = None) -> int:
             cohort_metric=get_metric(args.cohort_metric) if args.cohort_metric else None,
             curve_reference=_parse_curve_reference(args.curve_reference),
         )
+        spec = result.spec
+        # Scored under eval_weight_col; the fit weight is shown alongside when
+        # the two differ, so neither weighting is presented as the only answer.
+        fit_weighted = (
+            f"{result.test_mae_fit_weighted:11.4f}"
+            if spec.eval_weight_col != spec.weight_col
+            else f"{'—':>11s}"
+        )
         print(
             f"{name:6s} {result.peak_age:6.2f} {result.peak_value:12.4f} "
-            f"{result.test_mae:11.4f} {result.n_train:8d} {result.n_test:7d}"
+            f"{result.test_mae:11.4f} {fit_weighted} "
+            f"{result.n_train:8d} {result.n_test:7d}"
         )
 
+    print(
+        f"\ntest MAE is {get_metric(names[0]).eval_weight_col}-weighted; "
+        "fit-wt MAE re-scores the same predictions using the fitting weight "
+        "(shown only where they differ)."
+    )
     return 0
 
 

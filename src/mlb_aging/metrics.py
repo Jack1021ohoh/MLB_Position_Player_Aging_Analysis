@@ -28,13 +28,29 @@ class MetricSpec:
         Sample-weight column used when *fitting* the GAM: plate appearances for
         rate-style hitting metrics, games played for the rest.
     eval_weight_col
-        Sample-weight column used when *evaluating* test MAE.
+        Sample-weight column used when *evaluating* test MAE. ``'PA'`` for all
+        five metrics, so Def, Spd and WAR are fitted G-weighted but scored
+        PA-weighted.
 
-        BUG-PRESERVED: the notebooks call ``evaluate()`` without passing
-        ``weight_col``, so its ``'PA'`` default applies to every metric -- Def,
-        Spd and WAR are scored PA-weighted despite being fitted G-weighted.
-        Set to ``'PA'`` here for all five metrics to reproduce the published
-        numbers. The fix is to make this equal ``weight_col``.
+        This is a deliberate choice, not a mismatch to fix. The two weights
+        answer different questions: the fit weight is a statistical claim about
+        which *observations* are reliable (a 150-game season measures Def
+        better than a 20-game one), while the eval weight says which *errors*
+        matter to the reader. Nothing requires them to agree.
+
+        It reached here as ``evaluate()``'s silent default -- the notebooks
+        never passed ``weight_col`` -- so it is pinned explicitly now rather
+        than inherited. Scoring Def and Spd by plate appearances is the weaker
+        half of the choice, since both accrue in the field rather than at the
+        plate; the population that would expose it (defensive replacements,
+        pinch runners) is absent from the test set, which ``qual=100`` already
+        filtered to regulars. Test-set PA/G runs 2.06 at the 1st percentile to
+        4.56 at the 99th, and switching schemes relocates 6% of total weight
+        mass, moving MAE by 1-2%. ``AgingResult.test_mae_fit_weighted`` reports
+        the G-weighted number alongside, so the choice needs no argument.
+
+        It affects nothing but the MAE column: every peak age and peak value is
+        computed before scoring and is independent of this.
     curve_reference
         Value pinned into the career-mean column when tracing the aging curve.
         ``None`` leaves pyGAM's own grid value in place (OPS), a float pins a
