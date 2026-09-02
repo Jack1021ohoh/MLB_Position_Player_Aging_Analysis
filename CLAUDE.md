@@ -169,7 +169,8 @@ everyone's prediction) → `delta_lag` (last season plus the age adjustment) →
 `pipeline.compare_baselines` assembles all five.
 
 `delta_lag` is the reference (`REFERENCE_BASELINE`) because it is the strongest naive arm and
-the only one seeing what the GAM sees. Improvements against it:
+the only one seeing what the GAM sees. Improvements against it — **positive means better**,
+the convention used by `IPWComparison.mae_improvement`, the CLI and the README alike:
 
 | metric | gam | gam + ipw |
 |--------|-----|-----------|

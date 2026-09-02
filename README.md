@@ -172,11 +172,16 @@ leaving every peak age and peak value untouched. `mlb-aging train` reports both.
 
 | Metric | Peak Age | Test MAE | MAE Improvement |
 |--------|----------|----------|-----------------|
-| OPS    | 26       | 0.074    | −1.5%           |
-| wRC+   | 26       | 19.5     | −1.3%           |
-| Def    | 23       | 4.66     | −2.0%           |
-| Spd    | 21       | 0.981    | −0.5%           |
-| WAR    | 25       | 1.45     | −3.5%           |
+| OPS    | 26       | 0.0741   | +1.5%           |
+| wRC+   | 26       | 19.47    | +1.3%           |
+| Def    | 23       | 4.658    | +2.0%           |
+| Spd    | 21       | 0.9813   | +0.5%           |
+| WAR    | 25       | 1.445    | +3.5%           |
+
+Improvement is measured against the uncorrected GAM in the table above, and is **positive when
+the correction helps** — the same convention used everywhere else in this README, in
+`mlb-aging train` and in the notebooks. A negative number would mean the arm is *worse* than
+what it is being compared against, as Def is against the naive baseline below.
 
 ### Improvement over a Naive Baseline
 
