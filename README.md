@@ -62,42 +62,72 @@ MLB_Position_Player_Aging_Analysis/
 │   ├── hitter_train_data.csv    # Training dataset (1980-2019)
 │   ├── hitter_test_data.csv     # Test dataset (2021-2025)
 │   └── outside_data.csv         # Additional data
-├── fetch_data.ipynb             # Data collection and preprocessing
-├── GAM.ipynb                    # GAM aging curves for all players
-├── GAM_top.ipynb                # GAM aging curves for elite players
-├── GAM_IPW.ipynb                # GAM with IPW survivorship bias correction
+├── src/mlb_aging/
+│   ├── metrics.py               # MetricSpec: the five metrics as data
+│   ├── features.py              # Centering, lag, experience, career mean
+│   ├── dataset.py               # Loading and the train/test split
+│   ├── gam.py                   # Model spec, fitting, curve tracing
+│   ├── ipw.py                   # Survival model and IPW weights
+│   ├── evaluate.py              # Weighted test scoring
+│   ├── pipeline.py              # End-to-end runs and IPW comparisons
+│   ├── plots.py                 # Notebook plotting helpers
+│   ├── fetch.py                 # FanGraphs download (see caveat below)
+│   └── cli.py                   # The `mlb-aging` command
+├── tests/test_regression.py     # Pins every published number to 1e-9
+├── GAM.ipynb                    # Aging curves for all players
+├── GAM_top.ipynb                # Aging curves for elite players
+├── GAM_IPW.ipynb                # IPW survivorship bias correction
+├── pyproject.toml
+├── uv.lock                      # Exact pinned resolution
 └── README.md
 ```
 
+The notebooks are thin drivers: all analysis logic lives in `mlb_aging`, and the
+regression suite pins every number the notebooks report.
+
 ## Installation
 
-### Requirements
 ```bash
-pip install pandas numpy matplotlib scipy scikit-learn pybaseball pygam
+uv sync --all-extras     # builds .venv from uv.lock
 ```
 
-### Dependencies
-- Python 3.7+
-- pandas, numpy: Data manipulation and numerical computing
-- matplotlib: Visualization
-- scipy: Statistical functions
-- scikit-learn: Model evaluation and preprocessing
-- pybaseball: MLB data API
-- pyGAM: Generalized Additive Models
+`uv.lock` is committed deliberately. The regression suite asserts float equality to 1e-9,
+so an unpinned resolver update would be indistinguishable from a code regression. Results
+reproduce exactly on pandas 3.0.5, numpy 2.5.2, pygam 0.12.0 and scikit-learn 1.9.0.
 
 ## Usage
 
-### 1. Data Collection
-Run [fetch_data.ipynb](fetch_data.ipynb) to download and prepare MLB statistics.
+### Command line
 
-### 2. GAM Analysis (All Players)
-Run [GAM.ipynb](GAM.ipynb) to fit aging curves for all five metrics on the full player population.
+```bash
+.venv/bin/mlb-aging train                          # all five metrics
+.venv/bin/mlb-aging train --metric WAR --ipw       # survivorship-corrected
+.venv/bin/mlb-aging train --metric wRC+ --elite 110 --elite-test --curve-reference train_mean
+```
 
-### 3. Elite Player Analysis
-Run [GAM_top.ipynb](GAM_top.ipynb) to fit aging curves restricted to top players and compare with the general population.
+### Notebooks
 
-### 4. Survivorship Bias Correction
-Run [GAM_IPW.ipynb](GAM_IPW.ipynb) to fit IPW-corrected aging curves and evaluate the impact of survivorship bias on each metric.
+| Notebook | What it covers |
+|---|---|
+| [GAM.ipynb](GAM.ipynb) | Aging curves for all five metrics on the full population |
+| [GAM_top.ipynb](GAM_top.ipynb) | Elite-player curves, compared against the general population |
+| [GAM_IPW.ipynb](GAM_IPW.ipynb) | IPW-corrected curves and the survivorship-bias impact per metric |
+
+Point the notebook kernel at the project venv, then run top to bottom.
+
+### Tests
+
+```bash
+.venv/bin/python -m pytest tests/ -q
+```
+
+### Data collection
+
+The committed CSVs are what every result above is computed from. Refreshing them is
+currently **not possible**: FanGraphs placed the site behind a Cloudflare bot challenge in
+April 2026, which blocks all automated requests, and `pybaseball` has been unmaintained
+since 2023. `src/mlb_aging/fetch.py` and [fetch_data.ipynb](fetch_data.ipynb) are kept
+because they document the exact query that produced the data.
 
 ## Results Summary
 

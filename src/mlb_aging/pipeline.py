@@ -5,11 +5,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+import pandas as pd
+
 from mlb_aging.dataset import DEFAULT_DATA_DIR, build_training_frame, load_data
 from mlb_aging.evaluate import evaluate
 from mlb_aging.features import generate_test_data
 from mlb_aging.gam import AgingCurve, aging_curve, fit_gam
-from mlb_aging.ipw import fit_ipw_weights
+from mlb_aging.ipw import (
+    RetirementDiagnostics,
+    evaluate_retirement_model,
+    fit_ipw_weights,
+)
 from mlb_aging.metrics import MetricSpec
 
 
@@ -30,6 +36,14 @@ class AgingResult:
     @property
     def peak_value(self) -> float:
         return self.curve.peak_value
+
+    def summary(self) -> str:
+        return (
+            f"{self.spec.name}: peak age {self.peak_age:.2f}  |  "
+            f"peak value {self.peak_value:.4f}  |  "
+            f"test MAE {self.test_mae:.4f}  "
+            f"(n_train={self.n_train}, n_test={self.n_test})"
+        )
 
 
 def cohort_ids(
@@ -56,6 +70,7 @@ def run_metric(
     elite_test: bool = False,
     cohort_metric: MetricSpec | None = None,
     curve_reference: float | str | None = "__spec__",
+    test_threshold: float | None = None,
 ) -> AgingResult:
     """Fit one metric and score it on the held-out seasons.
 
@@ -75,6 +90,10 @@ def run_metric(
         another.
     curve_reference
         Override the career-mean value pinned when tracing the curve.
+    test_threshold
+        Restrict the *test* set independently of training, so an all-player
+        model can be scored on the elite subset. ``elite_test`` is the special
+        case where this equals ``elite_threshold``.
     """
     train_data, test_data = load_data(spec, data_dir=data_dir)
 
@@ -93,8 +112,12 @@ def run_metric(
     curve = aging_curve(gam, train_df, spec, curve_reference=curve_reference)
 
     test_df = generate_test_data(train_df, test_data, spec.target_col)
-    if elite_test and elite_threshold is not None and cohort_metric is None:
-        test_df = test_df.loc[test_df[spec.career_mean_col] > elite_threshold, :]
+
+    threshold = test_threshold
+    if threshold is None and elite_test and elite_threshold is not None and cohort_metric is None:
+        threshold = elite_threshold
+    if threshold is not None:
+        test_df = test_df.loc[test_df[spec.career_mean_col] > threshold, :]
 
     return AgingResult(
         spec=spec,
@@ -102,4 +125,62 @@ def run_metric(
         test_mae=evaluate(test_df, spec, gam),
         n_train=len(train_df),
         n_test=len(test_df),
+    )
+
+
+@dataclass
+class IPWComparison:
+    """An uncorrected and a survivorship-corrected fit of the same metric."""
+
+    spec: MetricSpec
+    baseline: AgingResult
+    corrected: AgingResult
+    survival_baseline: RetirementDiagnostics
+    survival_with_perf: RetirementDiagnostics
+    p_survive_by_age: pd.Series
+
+    @property
+    def mae_improvement(self) -> float:
+        """Fractional reduction in test MAE, positive when IPW helps."""
+        return 1.0 - self.corrected.test_mae / self.baseline.test_mae
+
+    @property
+    def auc_gain(self) -> float:
+        """AUC added by giving the survival model the lagged metric."""
+        return self.survival_with_perf.auc - self.survival_baseline.auc
+
+    def summary(self) -> str:
+        return (
+            f"{self.spec.name}  (fit weight {self.spec.weight_col})\n"
+            f"  Survival AUC — without {self.spec.lag_col}: "
+            f"{self.survival_baseline.auc:.4f}  |  with: "
+            f"{self.survival_with_perf.auc:.4f}  ({self.auc_gain:+.4f})\n"
+            f"  Peak age     — original: {self.baseline.peak_age:.1f}  |  "
+            f"IPW: {self.corrected.peak_age:.1f}\n"
+            f"  Test MAE     — original: {self.baseline.test_mae:.4f}  |  "
+            f"IPW: {self.corrected.test_mae:.4f}  "
+            f"({self.mae_improvement:+.1%})"
+        )
+
+
+def compare_ipw(
+    spec: MetricSpec, data_dir: Path | str = DEFAULT_DATA_DIR
+) -> IPWComparison:
+    """Fit ``spec`` with and without the survivorship correction.
+
+    Both arms are scored identically, so the comparison is unaffected by which
+    weight column ``evaluate`` uses.
+    """
+    train_data, _ = load_data(spec, data_dir=data_dir)
+    frame = build_training_frame(train_data, spec)
+
+    return IPWComparison(
+        spec=spec,
+        baseline=run_metric(spec, data_dir=data_dir),
+        corrected=run_metric(spec, data_dir=data_dir, ipw=True),
+        survival_baseline=evaluate_retirement_model(frame, weight_col=spec.weight_col),
+        survival_with_perf=evaluate_retirement_model(
+            frame, weight_col=spec.weight_col, perf_col=spec.lag_col
+        ),
+        p_survive_by_age=fit_ipw_weights(frame, spec).groupby("Age")["p_survive"].mean(),
     )

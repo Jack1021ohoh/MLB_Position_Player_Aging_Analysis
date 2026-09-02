@@ -16,7 +16,7 @@ migrated onto it; see **Migration state** below for what has and hasn't moved.
 ```bash
 uv sync --all-extras                               # builds .venv from uv.lock
 
-.venv/bin/python -m pytest tests/ -q              # full regression suite (~45s)
+.venv/bin/python -m pytest tests/ -q              # full regression suite, 22 tests (~50s)
 .venv/bin/python -m pytest tests/ -q -k IPW       # one group
 .venv/bin/python -m pytest tests/test_regression.py::test_all_player_curves -q
 
@@ -148,18 +148,50 @@ threshold, so a cohort defined by career WAR can be modelled on Def or wRC+. `GA
 this by reusing a positional boolean mask across differently-built frames, which quietly assumed
 identical row ordering; the id-based version is verified equivalent by the regression tests.
 
+### Training and test populations are independent
+
+`run_metric`'s `elite_threshold` restricts *training*; `test_threshold` restricts *scoring*.
+`elite_test=True` is the special case where they are equal. GAM_top's prose needs all three
+shapes: a model trained and scored on everyone, the same model scored only on elites (this is
+where wRC+ 19.72 → 20.47 comes from), and a specialist model trained and scored on elites.
+
+### Notebook-facing helpers
+
+`pipeline.compare_ipw` fits a metric both ways and returns an `IPWComparison` carrying both
+`AgingResult`s, the survival diagnostics with and without `perf_col`, and mean `p_survive` by age
+— one call per notebook section. `plots.py` is the only module that draws; everything else returns
+data. `AgingResult.summary()` and `IPWComparison.summary()` produce the printed lines the
+notebooks show, so their format lives in one place.
+
 ## Migration state
 
-- **Ported:** the helper block, GAM fitting, curve tracing, IPW, evaluation, data fetching, and all
-  three notebooks' result paths — all covered by `tests/test_regression.py`.
-- **Not yet done:** the notebooks still carry their own duplicated copies of the old helpers and
-  have not been rewritten to import `mlb_aging`. Until they are, a change to the package does *not*
-  change the notebooks, and the two can drift. `delta_method.ipynb` (a superseded delta-method
-  baseline) has not been ported at all.
+- **Ported:** everything the three GAM notebooks did — the helper block, GAM fitting, curve
+  tracing, IPW, evaluation, data fetching — all covered by `tests/test_regression.py`.
+- **The notebooks now import `mlb_aging`.** `GAM.ipynb` (87 → 17 cells), `GAM_top.ipynb`
+  (108 → 21) and `GAM_IPW.ipynb` (39 → 20) hold narrative, one call per section, and plots. The
+  duplicated helper block is gone, so there is one implementation and it is the tested one.
+- **Not yet done:** `delta_method.ipynb`, a superseded delta-method baseline, has not been ported.
 - `data/outside_data.csv` has a different FanGraphs-export schema and is unused.
+
+### The fetch stage does not work
+
+FanGraphs put the whole site behind a Cloudflare bot challenge around **April 2026** (`cf-mitigated:
+challenge` on every path, including `/api/leaders/major-league/data` and the homepage). pybaseball
+is abandoned — 2.2.7 from Sept 2023 is the newest release *and* master still targets the retired
+`leaders-legacy.aspx` — so installing from git does not help, and neither does Colab. `fetch.py`'s
+own logic is verified correct offline; only the transport is dead. It is kept because it documents
+the exact query that produced the committed CSVs. Do not build a challenge solver. The committed
+data still reproduces every published number, so this blocks refreshing, not reproducing.
 
 ## Editing notebooks
 
 Prefer `NotebookEdit` over rewriting `.ipynb` JSON. The markdown cells quote specific numbers
 (peak ages, MAEs, AUCs); if a change moves those, update the surrounding prose and the `README.md`
 tables in the same commit.
+
+Re-run them with:
+
+```bash
+MPLBACKEND=Agg .venv/bin/python -m jupyter nbconvert --to notebook --execute --inplace \
+    --ExecutePreprocessor.timeout=1800 GAM.ipynb GAM_top.ipynb GAM_IPW.ipynb
+```

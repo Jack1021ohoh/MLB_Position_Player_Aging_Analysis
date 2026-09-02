@@ -61,6 +61,14 @@ ELITE_CASES = {
                        27.01001001001001, 123.5957775818701, 19.99131833317994),
 }
 
+# The all-player models scored on the elite test subset -- the "less accurate on
+# top performers" comparison in GAM_top.ipynb's prose. Training is unrestricted;
+# only the test set is filtered.  metric -> (test_threshold, n_test, mae)
+ALL_MODEL_ON_ELITE_TEST = {
+    "wRC+": (ELITE_WRC_THRESHOLD, 411, 20.4677333736631),
+    "WAR":  (ELITE_WAR_THRESHOLD, 376,  1.7429755586702773),
+}
+
 
 @pytest.mark.parametrize("metric", sorted(ALL_PLAYERS))
 def test_all_player_curves(metric):
@@ -113,6 +121,15 @@ def test_elite_cohort_curves(case):
         assert result.n_train == n_train
     assert result.peak_age == pytest.approx(peak, abs=EXACT)
     assert result.peak_value == pytest.approx(peak_value, abs=EXACT)
+    assert result.test_mae == pytest.approx(mae, abs=EXACT)
+
+
+@pytest.mark.parametrize("metric", sorted(ALL_MODEL_ON_ELITE_TEST))
+def test_all_player_model_scored_on_elite_test(metric):
+    threshold, n_test, mae = ALL_MODEL_ON_ELITE_TEST[metric]
+    result = run_metric(get_metric(metric), test_threshold=threshold)
+
+    assert result.n_test == n_test
     assert result.test_mae == pytest.approx(mae, abs=EXACT)
 
 
