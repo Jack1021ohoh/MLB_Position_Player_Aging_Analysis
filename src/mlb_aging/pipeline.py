@@ -11,7 +11,7 @@ from mlb_aging.baselines import DeltaCurve, run_baselines
 from mlb_aging.dataset import DEFAULT_DATA_DIR, build_training_frame, load_data
 from mlb_aging.evaluate import evaluate
 from mlb_aging.features import generate_test_data
-from mlb_aging.gam import AgingCurve, aging_curve, fit_gam
+from mlb_aging.gam import DEFAULT_SPEC, AgingCurve, aging_curve, fit_gam
 from mlb_aging.ipw import (
     RetirementDiagnostics,
     evaluate_retirement_model,
@@ -82,6 +82,7 @@ def run_metric(
     cohort_metric: MetricSpec | None = None,
     curve_reference: float | str | None = "__spec__",
     test_threshold: float | None = None,
+    model_spec: str = DEFAULT_SPEC,
 ) -> AgingResult:
     """Fit one metric and score it on the held-out seasons.
 
@@ -105,6 +106,10 @@ def run_metric(
         Restrict the *test* set independently of training, so an all-player
         model can be scored on the elite subset. ``elite_test`` is the special
         case where this equals ``elite_threshold``.
+    model_spec
+        ``"tensor"`` (default) reproduces the published fits. ``"age_only"``
+        drops the age x experience tensor, which makes the traced curve
+        independent of the debut-age assumption -- see :func:`build_gam`.
     """
     train_data, test_data = load_data(spec, data_dir=data_dir)
 
@@ -119,7 +124,7 @@ def run_metric(
     if ipw:
         weights = fit_ipw_weights(train_df, spec)["ipw_final_weight"].values
 
-    gam = fit_gam(train_df, spec, weights=weights)
+    gam = fit_gam(train_df, spec, weights=weights, model_spec=model_spec)
     curve = aging_curve(gam, train_df, spec, curve_reference=curve_reference)
 
     test_df = generate_test_data(train_df, test_data, spec.target_col)
@@ -176,7 +181,9 @@ class IPWComparison:
 
 
 def compare_ipw(
-    spec: MetricSpec, data_dir: Path | str = DEFAULT_DATA_DIR
+    spec: MetricSpec,
+    data_dir: Path | str = DEFAULT_DATA_DIR,
+    model_spec: str = DEFAULT_SPEC,
 ) -> IPWComparison:
     """Fit ``spec`` with and without the survivorship correction.
 
@@ -188,8 +195,8 @@ def compare_ipw(
 
     return IPWComparison(
         spec=spec,
-        baseline=run_metric(spec, data_dir=data_dir),
-        corrected=run_metric(spec, data_dir=data_dir, ipw=True),
+        baseline=run_metric(spec, data_dir=data_dir, model_spec=model_spec),
+        corrected=run_metric(spec, data_dir=data_dir, ipw=True, model_spec=model_spec),
         survival_baseline=evaluate_retirement_model(frame, weight_col=spec.weight_col),
         survival_with_perf=evaluate_retirement_model(
             frame, weight_col=spec.weight_col, perf_col=spec.lag_col
@@ -239,7 +246,9 @@ class BaselineComparison:
 
 
 def compare_baselines(
-    spec: MetricSpec, data_dir: Path | str = DEFAULT_DATA_DIR
+    spec: MetricSpec,
+    data_dir: Path | str = DEFAULT_DATA_DIR,
+    model_spec: str = DEFAULT_SPEC,
 ) -> BaselineComparison:
     """Score the naive ladder and both GAM arms on the same test frame.
 
@@ -250,8 +259,8 @@ def compare_baselines(
     ``delta_method.ipynb``'s numbers incomparable to the GAM's.
     """
     baselines, curve = run_baselines(spec, data_dir=data_dir)
-    gam = run_metric(spec, data_dir=data_dir)
-    gam_ipw = run_metric(spec, data_dir=data_dir, ipw=True)
+    gam = run_metric(spec, data_dir=data_dir, model_spec=model_spec)
+    gam_ipw = run_metric(spec, data_dir=data_dir, ipw=True, model_spec=model_spec)
 
     maes = {name: (r.test_mae, r.test_mae_fit_weighted) for name, r in baselines.items()}
     maes["gam"] = (gam.test_mae, gam.test_mae_fit_weighted)
