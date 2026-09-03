@@ -295,6 +295,24 @@ tables in the same commit.
 Re-run them with:
 
 ```bash
-MPLBACKEND=Agg .venv/bin/python -m jupyter nbconvert --to notebook --execute --inplace \
-    --ExecutePreprocessor.timeout=1800 GAM.ipynb GAM_top.ipynb GAM_IPW.ipynb
+.venv/bin/python -m jupyter nbconvert --to notebook --execute --inplace \
+    --ExecutePreprocessor.timeout=3600 \
+    GAM.ipynb GAM_top.ipynb GAM_IPW.ipynb delta_method.ipynb curve_validation.ipynb
 ```
+
+**Do not set `MPLBACKEND=Agg`.** It overrides the kernel's inline backend, so `plt.show()`
+renders to nothing and nbconvert stores **no figures at all** — the notebooks come back with
+correct outputs and every plot silently gone. This is not hypothetical; it wiped all eleven
+stored figures in one commit. After any re-run, check they survived:
+
+```bash
+.venv/bin/python -c "
+import json, sys
+for f in sys.argv[1:]:
+    nb = json.load(open(f))
+    n = sum('image/png' in o.get('data', {}) for c in nb['cells'] for o in c.get('outputs', []))
+    print(f, 'figures =', n)
+" GAM.ipynb GAM_top.ipynb GAM_IPW.ipynb delta_method.ipynb curve_validation.ipynb
+```
+
+Expected: GAM 5, GAM_top 7, GAM_IPW 5, delta_method 1, curve_validation 1.
