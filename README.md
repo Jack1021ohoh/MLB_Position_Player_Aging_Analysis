@@ -10,12 +10,13 @@ This project constructs aging curves for MLB position players using historical d
 
 - **Peak Offensive Age**: Position players reach their offensive peak around **age 26** for both OPS and wRC+
 - **Defensive Peak**: Players peak defensively earlier, around **age 23**, driven primarily by athleticism
-- **Speed Peak**: Base running speed peaks at **age 21** and declines monotonically — the earliest peak of all metrics
+- **Speed Never Peaks in the Majors**: The Spd curve declines monotonically from **age 21** — but 21 is simply the youngest age fitted, since `add_lag` drops every player's first season. The maximum sits on the left edge of the data, not at a turning point, so speed is *already* declining when players arrive and its true peak precedes the majors
 - **Overall Value Peak**: WAR contribution peaks around **age 25**, one year before hitting, due to the earlier decline of defense and speed
 - **Survivorship Bias**: IPW correction consistently improves predictive accuracy across all metrics, with the largest gain in WAR (3.5% MAE reduction)
 - **Gain over a Naive Baseline**: Measured against the delta method applied to each player's prior season, GAM + IPW reduces test MAE by **8.8% for OPS** and **7.4% for wRC+**. WAR gains 3.7% — almost all of it from the survivorship correction rather than the model itself. Def does not beat the baseline, and that is reported rather than hidden
 - **Elite Player Differences**: Top players (career WAR ≥ 2.5) peak in overall value one year later (age 26) and sustain hitting performance longer (wRC+ peak age 27)
-- **Decline Phase**: Significant performance decline begins after age 35 across all metrics
+- **Decline Schedule**: The average position player loses **about 1.0 WAR between ages 30 and 34** (~0.25 WAR per year) and reaches replacement level around **age 35** — the numbers a contract spanning the decline phase actually turns on. Peak age says where the curve turns; the decline schedule says what a multi-year deal is buying
+- **Decline Phase**: Decline is underway from the late 20s rather than beginning at 35. The single steepest years come after 34–35, but by then most of a player's peak value is already gone
 
 ## Performance Metrics Analyzed
 
@@ -181,8 +182,14 @@ dataset* and so cannot reproduce the numbers above.
 | OPS    | 26       | 0.075    |
 | wRC+   | 26       | 19.7     |
 | Def    | 23       | 4.75     |
-| Spd    | 21       | 0.986    |
+| Spd    | 21\*     | 0.986    |
 | WAR    | 25       | 1.50     |
+
+\* Spd's maximum is the **left edge of the fitted range, not a peak**. No age-20 row survives
+`add_lag`, so the curve starts at 21 and falls from its first point — the rise from the youngest
+age to the "peak" is exactly 0.0000. The other four are genuine interior maxima (rise to peak:
+Def +0.45, WAR +0.77, OPS +0.05). `AgingCurve.peaks_at_left_edge` reports this, and `GAM.ipynb`
+prints it for all five metrics.
 
 Test MAE is PA-weighted throughout. Def, Spd and WAR are *fitted* G-weighted, since both
 metrics accrue over games played rather than plate appearances; re-scoring them G-weighted
@@ -197,13 +204,49 @@ leaving every peak age and peak value untouched. `mlb-aging train` reports both.
 | OPS    | 26       | 0.0741   | +1.5%           |
 | wRC+   | 26       | 19.47    | +1.3%           |
 | Def    | 23       | 4.658    | +2.0%           |
-| Spd    | 21       | 0.9813   | +0.5%           |
+| Spd    | 21\*     | 0.9813   | +0.5%           |
 | WAR    | 25       | 1.445    | +3.5%           |
 
 Improvement is measured against the uncorrected GAM in the table above, and is **positive when
 the correction helps** — the same convention used everywhere else in this README, in
 `mlb-aging train` and in the notebooks. A negative number would mean the arm is *worse* than
 what it is being compared against, as Def is against the naive baseline below.
+
+### Decline Schedule
+
+Peak age says where a curve turns; it does not say what a contract is buying. An extension
+signed at 24 runs through the peak and out the far side, and a free-agent deal is almost
+entirely decline phase. Both need the *slope*, in the metric's own units, across the ages
+actually being paid for. Traced from the same fitted curves (`GAM.ipynb`, final section):
+
+| age | OPS | wRC+ | Def | Spd | WAR |
+|-----|-----|------|-----|-----|-----|
+| 28 | 0.010 | 102.8 | −0.45 | 3.87 | 1.62 |
+| 30 | −0.001 | 99.8 | −1.72 | 3.60 | 1.22 |
+| 32 | −0.014 | 96.5 | −3.25 | 3.35 | 0.73 |
+| 34 | −0.028 | 93.2 | −4.81 | 3.14 | 0.22 |
+| 36 | −0.046 | 88.8 | −6.04 | 2.91 | −0.33 |
+| 38 | −0.072 | 82.2 | −6.60 | 2.63 | −0.99 |
+
+Over the four years from 30 to 34 — roughly a first free-agent deal — the average position
+player loses:
+
+| metric | age 30 | age 34 | change | per year |
+|--------|--------|--------|--------|----------|
+| WAR    | 1.217  | 0.224  | **−0.99** | −0.25 |
+| wRC+   | 99.8   | 93.2   | −6.69  | −1.67 |
+| Def    | −1.72  | −4.81  | −3.09  | −0.77 |
+| Spd    | 3.60   | 3.14   | −0.46  | −0.11 |
+| OPS    | −0.001 | −0.028 | −0.027 | −0.007 |
+
+**The WAR curve reaches replacement level at age 35.1.**
+
+Two cautions. These are *population* curves describing the average player at each age, not any
+individual's trajectory, and players vary widely around them. And the late ages are
+survivor-weighted, since only players holding 100+ PA remain — the correction for which is the
+IPW arm above. That correction shifts the decline phase's *level* by roughly 0.05 WAR while
+leaving its *slope* essentially unchanged (1.02 vs 0.99 WAR lost from 30 to 34), so the figures
+here are robust to it.
 
 ### Improvement over a Naive Baseline
 

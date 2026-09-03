@@ -53,7 +53,15 @@ def fit_gam(
 
 @dataclass(frozen=True)
 class AgingCurve:
-    """A traced aging curve and the grid it was evaluated on."""
+    """A traced aging curve and the grid it was evaluated on.
+
+    ``ages`` is **not** a sorted one-dimensional sweep. ``generate_X_grid`` on
+    a tensor term returns an ``n x n`` mesh, so each age appears many times and
+    the array is not monotonic -- interpolating against it directly gives
+    nonsense. Every non-age feature is pinned by :func:`aging_curve` before
+    prediction, so the repeats are exact duplicates; use :attr:`by_age` or
+    :meth:`value_at`, which collapse them.
+    """
 
     ages: np.ndarray
     predictions: np.ndarray
@@ -65,6 +73,32 @@ class AgingCurve:
     @property
     def peak_value(self) -> float:
         return float(np.max(self.predictions))
+
+    @property
+    def by_age(self) -> pd.Series:
+        """The curve as one prediction per age, sorted ascending."""
+        series = pd.Series(self.predictions, index=self.ages)
+        return series.groupby(level=0).first().sort_index()
+
+    def value_at(self, age: float) -> float:
+        """The curve's value at ``age``, interpolated between grid points."""
+        curve = self.by_age
+        return float(np.interp(age, curve.index.values, curve.values))
+
+    def change_between(self, start: float, end: float) -> float:
+        """Signed change from ``start`` to ``end`` -- negative means decline."""
+        return self.value_at(end) - self.value_at(start)
+
+    @property
+    def peaks_at_left_edge(self) -> bool:
+        """True when the maximum sits on the youngest age fitted.
+
+        Then the curve only ever declines over the observed range and the
+        "peak" is an artefact of where the data starts, not a turning point.
+        Spd is the case in point: no age-20 row survives ``add_lag``, so the
+        curve begins at 21 and falls from there.
+        """
+        return bool(np.isclose(self.peak_age, self.by_age.index.min()))
 
 
 def aging_curve(

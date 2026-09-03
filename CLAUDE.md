@@ -130,6 +130,26 @@ reference shifts the curve **level only — it never moves the peak age.** The n
 inconsistent here (all-player wRC+ pins 100; every top-player section uses the training mean),
 which is why the reference is overridable per run.
 
+### Spd's "peak" is the left edge of the data, not a turning point
+
+`add_lag` drops every player's first season, so no age-20 row reaches the model and the fitted
+age range starts at **21**, not at `MIN_AGE`. Spd's argmax lands exactly there: the rise from the
+youngest age to the "peak" is 0.0000 and the curve declines monotonically across the whole range.
+The number 21 is correct and pinned; the word *peak* is what would be wrong. Say "speed is
+already declining at the youngest age observed" — its true maximum is outside the data.
+
+`AgingCurve.peaks_at_left_edge` reports this, and `GAM.ipynb` prints it for all five metrics.
+The other four are genuine interior maxima (rise to peak: OPS +0.05, wRC+ +13.66, Def +0.45,
+WAR +0.77).
+
+### `AgingCurve.ages` is a mesh, not a sorted sweep
+
+`generate_X_grid(term=0)` on the `te(0, 2)` tensor returns an `n x n` mesh, so `ages` holds
+1,000,000 rows with each age repeated and **is not monotonic** — `np.interp` against it directly
+returns nonsense. Every non-age feature is pinned before prediction, so the repeats are exact
+duplicates. Use `curve.by_age` (one prediction per age, sorted), `curve.value_at(age)` or
+`curve.change_between(a, b)`. `peak_age` is unaffected, since `argmax` does not care about order.
+
 ### Test set shrinks toward long careers
 
 `generate_test_data` drops test rows for players absent from the training era, since they have no

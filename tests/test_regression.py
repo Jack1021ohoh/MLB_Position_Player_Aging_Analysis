@@ -8,6 +8,7 @@ lands, the expectation it moves should change in the same commit.
 
 from __future__ import annotations
 
+import pandas as pd
 import pytest
 
 from mlb_aging.dataset import build_training_frame, load_data
@@ -247,3 +248,70 @@ def test_delta_method_ladder_is_ordered_as_documented():
     for metric in sorted(BASELINE_MAE):
         maes = BASELINE_MAE[metric]
         assert maes["delta_lag"] < maes["persistence"] < maes["delta_curve"], metric
+
+
+# --- Curve geometry: which "peaks" are real ---------------------------------
+#: Spd's maximum is the youngest age fitted, not a turning point. add_lag drops
+#: every player's first season, so the curve starts at 21 and only ever falls.
+#: The number 21 is right; calling it a peak is not.
+PEAK_IS_LEFT_EDGE = {
+    "OPS": False, "wRC+": False, "Def": False, "Spd": True, "WAR": False,
+}
+YOUNGEST_FITTED_AGE = 21.0
+#: generate_X_grid on the te(0, 2) tensor returns an n x n mesh.
+CURVE_GRID_POINTS = 1_000_000
+CURVE_UNIQUE_AGES = 1_000
+
+
+@pytest.mark.parametrize("metric", sorted(PEAK_IS_LEFT_EDGE))
+def test_peak_is_interior_except_for_spd(metric):
+    curve = run_metric(get_metric(metric)).curve
+
+    assert curve.by_age.index.min() == pytest.approx(YOUNGEST_FITTED_AGE, abs=EXACT)
+    assert curve.peaks_at_left_edge is PEAK_IS_LEFT_EDGE[metric]
+
+    rise = curve.peak_value - curve.value_at(YOUNGEST_FITTED_AGE)
+    if PEAK_IS_LEFT_EDGE[metric]:
+        assert rise == pytest.approx(0.0, abs=EXACT)
+    else:
+        assert rise > 0.0
+
+
+def test_curve_ages_are_a_mesh_and_by_age_collapses_it():
+    """``ages`` repeats and is unsorted; ``by_age`` must fix both."""
+    curve = run_metric(get_metric("WAR")).curve
+
+    assert len(curve.ages) == CURVE_GRID_POINTS
+    assert len(curve.by_age) == CURVE_UNIQUE_AGES
+    assert curve.by_age.index.is_monotonic_increasing
+    # every repeat of an age carries the same prediction, so collapsing is lossless
+    assert pd.Series(curve.predictions, index=curve.ages).groupby(level=0).nunique().max() == 1
+
+
+# --- The decline schedule the README quotes ---------------------------------
+DECLINE_30_TO_34 = {
+    "OPS":  -0.02685685289440412,
+    "wRC+": -6.687740147129119,
+    "Def":  -3.0878889879219966,
+    "Spd":  -0.4564014608176836,
+    "WAR":  -0.9922813131497311,
+}
+WAR_AT_30 = 1.2167236828651082
+WAR_AT_35 = 0.02517545987321492
+
+
+@pytest.mark.parametrize("metric", sorted(DECLINE_30_TO_34))
+def test_decline_schedule(metric):
+    curve = run_metric(get_metric(metric)).curve
+    assert curve.change_between(30, 34) == pytest.approx(
+        DECLINE_30_TO_34[metric], abs=EXACT
+    )
+
+
+def test_war_reaches_replacement_level_around_35():
+    """The README's headline decline claim: ~1 WAR lost 30->34, ~0 at 35."""
+    curve = run_metric(get_metric("WAR")).curve
+
+    assert curve.value_at(30) == pytest.approx(WAR_AT_30, abs=EXACT)
+    assert curve.value_at(35) == pytest.approx(WAR_AT_35, abs=EXACT)
+    assert curve.value_at(34) > 0.0 > curve.value_at(36)
