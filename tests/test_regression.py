@@ -1,9 +1,14 @@
-"""Regression tests pinning the published notebook results.
+"""Regression tests pinning the ``tensor`` specification's results.
 
-Every expected value is transcribed from the stored outputs of GAM.ipynb,
-GAM_IPW.ipynb and GAM_top.ipynb. They exist so the refactor can be proven
-behaviour-preserving *before* any of the known bugs are fixed -- when a fix
-lands, the expectation it moves should change in the same commit.
+Every expected value here was transcribed from the stored outputs of GAM.ipynb,
+GAM_IPW.ipynb and GAM_top.ipynb as they stood when ``te(0, 2)`` was the default,
+and every call below therefore passes ``model_spec=TENSOR_SPEC`` explicitly.
+
+The published default is now ``age_only`` (see ``curve_validation.ipynb``
+section 5 for why), so these no longer describe what ``mlb-aging train`` prints.
+They are kept unchanged as the reproduction contract for the original notebooks:
+the tensor code path still exists, and these prove it still produces exactly what
+it always did. ``test_age_only.py`` pins the numbers that are published now.
 """
 
 from __future__ import annotations
@@ -14,7 +19,8 @@ import pytest
 from mlb_aging.dataset import build_training_frame, load_data
 from mlb_aging.ipw import evaluate_retirement_model
 from mlb_aging.metrics import ELITE_WAR_THRESHOLD, ELITE_WRC_THRESHOLD, get_metric
-from mlb_aging.pipeline import compare_baselines, run_metric
+from conftest import baselines, fit
+from mlb_aging.gam import TENSOR_SPEC
 
 # Peak ages and MAEs are exact floats from `execute_result` cells, so they are
 # compared tightly. Values printed with `:.4f` get a rounding-width tolerance.
@@ -77,7 +83,7 @@ ALL_MODEL_ON_ELITE_TEST = {
 @pytest.mark.parametrize("metric", sorted(ALL_PLAYERS))
 def test_all_player_curves(metric):
     peak, peak_value, mae = ALL_PLAYERS[metric]
-    result = run_metric(get_metric(metric))
+    result = fit(metric, model_spec=TENSOR_SPEC)
 
     assert result.peak_age == pytest.approx(peak, abs=EXACT)
     assert result.peak_value == pytest.approx(peak_value, abs=EXACT)
@@ -87,7 +93,7 @@ def test_all_player_curves(metric):
 @pytest.mark.parametrize("metric", sorted(IPW_RESULTS))
 def test_ipw_corrected_curves(metric):
     peak, mae = IPW_RESULTS[metric]
-    result = run_metric(get_metric(metric), ipw=True)
+    result = fit(metric, ipw=True, model_spec=TENSOR_SPEC)
 
     assert result.peak_age == pytest.approx(peak, abs=5e-2)
     assert result.test_mae == pytest.approx(mae, abs=PRINTED)
@@ -112,13 +118,14 @@ def test_retirement_model_discrimination(metric):
 def test_elite_cohort_curves(case):
     metric, threshold, cohort, elite_test, n_train, peak, peak_value, mae = ELITE_CASES[case]
 
-    result = run_metric(
-        get_metric(metric),
+    result = fit(
+        metric,
         elite_threshold=threshold,
-        cohort_metric=get_metric(cohort) if cohort else None,
+        cohort_metric=cohort,
         elite_test=elite_test,
         # every top-player section pins the training mean, even for wRC+
         curve_reference="train_mean",
+        model_spec=TENSOR_SPEC,
     )
 
     if n_train is not None:
@@ -131,7 +138,7 @@ def test_elite_cohort_curves(case):
 @pytest.mark.parametrize("metric", sorted(ALL_MODEL_ON_ELITE_TEST))
 def test_all_player_model_scored_on_elite_test(metric):
     threshold, n_test, mae = ALL_MODEL_ON_ELITE_TEST[metric]
-    result = run_metric(get_metric(metric), test_threshold=threshold)
+    result = fit(metric, test_threshold=threshold, model_spec=TENSOR_SPEC)
 
     assert result.n_test == n_test
     assert result.test_mae == pytest.approx(mae, abs=EXACT)
@@ -162,7 +169,7 @@ def test_scoring_weight_is_pinned_deliberately():
 
 @pytest.mark.parametrize("metric", sorted(ALL_PLAYERS))
 def test_both_scoring_weights_are_reported(metric):
-    result = run_metric(get_metric(metric))
+    result = fit(metric, model_spec=TENSOR_SPEC)
     spec = result.spec
 
     if metric in FIT_WEIGHTED_MAE:
@@ -216,7 +223,7 @@ GAM_VS_DELTA_LAG = {
 
 @pytest.mark.parametrize("metric", sorted(BASELINE_MAE))
 def test_naive_baselines(metric):
-    comparison = compare_baselines(get_metric(metric))
+    comparison = baselines(metric, model_spec=TENSOR_SPEC)
 
     for name, expected in BASELINE_MAE[metric].items():
         assert comparison.maes[name][0] == pytest.approx(expected, abs=EXACT), name
@@ -233,7 +240,7 @@ def test_gam_improvement_over_delta_lag(metric):
     These are the numbers any "GAM + IPW improves accuracy by X" claim rests
     on, so they are pinned rather than recomputed by hand each time.
     """
-    comparison = compare_baselines(get_metric(metric))
+    comparison = baselines(metric, model_spec=TENSOR_SPEC)
     expected_gam, expected_ipw = GAM_VS_DELTA_LAG[metric]
 
     assert comparison.improvement("gam") == pytest.approx(expected_gam, abs=EXACT)
@@ -265,7 +272,7 @@ CURVE_UNIQUE_AGES = 1_000
 
 @pytest.mark.parametrize("metric", sorted(PEAK_IS_LEFT_EDGE))
 def test_peak_is_interior_except_for_spd(metric):
-    curve = run_metric(get_metric(metric)).curve
+    curve = fit(metric, model_spec=TENSOR_SPEC).curve
 
     assert curve.by_age.index.min() == pytest.approx(YOUNGEST_FITTED_AGE, abs=EXACT)
     assert curve.peaks_at_left_edge is PEAK_IS_LEFT_EDGE[metric]
@@ -279,7 +286,7 @@ def test_peak_is_interior_except_for_spd(metric):
 
 def test_curve_ages_are_a_mesh_and_by_age_collapses_it():
     """``ages`` repeats and is unsorted; ``by_age`` must fix both."""
-    curve = run_metric(get_metric("WAR")).curve
+    curve = fit("WAR", model_spec=TENSOR_SPEC).curve
 
     assert len(curve.ages) == CURVE_GRID_POINTS
     assert len(curve.by_age) == CURVE_UNIQUE_AGES
@@ -302,7 +309,7 @@ WAR_AT_35 = 0.02517545987321492
 
 @pytest.mark.parametrize("metric", sorted(DECLINE_30_TO_34))
 def test_decline_schedule(metric):
-    curve = run_metric(get_metric(metric)).curve
+    curve = fit(metric, model_spec=TENSOR_SPEC).curve
     assert curve.change_between(30, 34) == pytest.approx(
         DECLINE_30_TO_34[metric], abs=EXACT
     )
@@ -310,7 +317,7 @@ def test_decline_schedule(metric):
 
 def test_war_reaches_replacement_level_around_35():
     """The README's headline decline claim: ~1 WAR lost 30->34, ~0 at 35."""
-    curve = run_metric(get_metric("WAR")).curve
+    curve = fit("WAR", model_spec=TENSOR_SPEC).curve
 
     assert curve.value_at(30) == pytest.approx(WAR_AT_30, abs=EXACT)
     assert curve.value_at(35) == pytest.approx(WAR_AT_35, abs=EXACT)

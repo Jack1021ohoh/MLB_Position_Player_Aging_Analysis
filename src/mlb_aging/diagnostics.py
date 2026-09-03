@@ -36,7 +36,7 @@ from pygam.utils import flatten
 from mlb_aging.dataset import DEFAULT_DATA_DIR, build_training_frame, load_data
 from mlb_aging.evaluate import inference
 from mlb_aging.ipw import fit_ipw_weights
-from mlb_aging.gam import TENSOR_SPEC, AgingCurve, aging_curve, fit_gam
+from mlb_aging.gam import DEFAULT_SPEC, AgingCurve, aging_curve, fit_gam
 from mlb_aging.metrics import MetricSpec
 
 #: Bin edges chosen so every bin holds enough test rows to mean something.
@@ -129,7 +129,7 @@ def _fit_subset(
     frame: pd.DataFrame,
     spec: MetricSpec,
     label: str,
-    model_spec: str = TENSOR_SPEC,
+    model_spec: str = DEFAULT_SPEC,
     use_ipw: bool = False,
 ) -> SplitFit:
     """Fit and trace one subset. IPW is refit *within* the subset, not reused."""
@@ -149,7 +149,7 @@ def _fit_subset(
 def era_curves(
     spec: MetricSpec,
     eras: dict[str, tuple[int, int]],
-    model_spec: str = TENSOR_SPEC,
+    model_spec: str = DEFAULT_SPEC,
     use_ipw: bool = False,
     data_dir: Path | str = DEFAULT_DATA_DIR,
 ) -> dict[str, SplitFit]:
@@ -169,7 +169,7 @@ def era_curves(
 def random_split_curves(
     spec: MetricSpec,
     seed: int = 0,
-    model_spec: str = TENSOR_SPEC,
+    model_spec: str = DEFAULT_SPEC,
     use_ipw: bool = False,
     data_dir: Path | str = DEFAULT_DATA_DIR,
 ) -> tuple[SplitFit, SplitFit]:
@@ -204,7 +204,7 @@ def random_split_curves(
 def peak_stability(
     spec: MetricSpec,
     seeds: tuple[int, ...] = (0, 1, 2, 3),
-    model_spec: str = TENSOR_SPEC,
+    model_spec: str = DEFAULT_SPEC,
     use_ipw: bool = False,
     data_dir: Path | str = DEFAULT_DATA_DIR,
 ) -> pd.DataFrame:

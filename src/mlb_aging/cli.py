@@ -6,6 +6,7 @@ import argparse
 from pathlib import Path
 
 from mlb_aging.dataset import DEFAULT_DATA_DIR
+from mlb_aging.gam import DEFAULT_SPEC, MODEL_SPECS
 from mlb_aging.metrics import METRICS, get_metric
 from mlb_aging.pipeline import REFERENCE_BASELINE, compare_baselines, run_metric
 
@@ -49,6 +50,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="apply --elite to this metric's career mean instead of the fitted metric's",
     )
     train.add_argument(
+        "--model-spec", choices=MODEL_SPECS, default=DEFAULT_SPEC,
+        help="how age enters the model: 'age_only' is a smooth on age alone (default); "
+             "'tensor' adds the age x experience interaction, which scores marginally "
+             "better but makes the traced curve depend on an assumed debut age.",
+    )
+    train.add_argument(
         "--curve-reference", metavar="VALUE",
         help="career mean pinned when tracing the curve: a number, or 'train_mean'. "
              "Shifts the curve level only -- the peak age is unaffected.",
@@ -61,6 +68,12 @@ def build_parser() -> argparse.ArgumentParser:
     baselines.add_argument(
         "--metric", action="append", choices=sorted(METRICS),
         help="metric to compare (repeatable; default: all five)",
+    )
+    baselines.add_argument(
+        "--model-spec", choices=MODEL_SPECS, default=DEFAULT_SPEC,
+        help="how age enters the model: 'age_only' is a smooth on age alone (default); "
+             "'tensor' adds the age x experience interaction, which scores marginally "
+             "better but makes the traced curve depend on an assumed debut age.",
     )
     return parser
 
@@ -92,7 +105,13 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "baselines":
         for name in args.metric or sorted(METRICS):
-            print(compare_baselines(get_metric(name), data_dir=args.data_dir).summary())
+            print(
+                compare_baselines(
+                    get_metric(name),
+                    data_dir=args.data_dir,
+                    model_spec=args.model_spec,
+                ).summary()
+            )
             print()
         print(
             f"Improvements are quoted against '{REFERENCE_BASELINE}' -- last season plus the\n"
@@ -118,6 +137,7 @@ def main(argv: list[str] | None = None) -> int:
             elite_test=args.elite_test,
             cohort_metric=get_metric(args.cohort_metric) if args.cohort_metric else None,
             curve_reference=_parse_curve_reference(args.curve_reference),
+            model_spec=args.model_spec,
         )
         spec = result.spec
         # Scored under eval_weight_col; the fit weight is shown alongside when

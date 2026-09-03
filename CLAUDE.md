@@ -16,7 +16,7 @@ migrated onto it; see **Migration state** below for what has and hasn't moved.
 ```bash
 uv sync --all-extras                               # builds .venv from uv.lock
 
-.venv/bin/python -m pytest tests/ -q              # full regression suite, 38 tests (~2min)
+.venv/bin/python -m pytest tests/ -q              # full regression suite, 83 tests (~3min)
 .venv/bin/python -m pytest tests/ -q -k IPW       # one group
 .venv/bin/python -m pytest tests/test_regression.py::test_all_player_curves -q
 
@@ -25,6 +25,7 @@ uv sync --all-extras                               # builds .venv from uv.lock
 .venv/bin/mlb-aging train --metric WAR --ipw       # survivorship-corrected
 .venv/bin/mlb-aging train --metric wRC+ --elite 110 --elite-test --curve-reference train_mean
 .venv/bin/mlb-aging train --metric Def --elite 2.5 --cohort-metric WAR --curve-reference train_mean
+.venv/bin/mlb-aging train --model-spec tensor      # the pre-adoption age x experience variant
 .venv/bin/mlb-aging fetch                          # BROKEN -- FanGraphs blocked, see below
 ```
 
@@ -40,11 +41,16 @@ old versions is needed.
 
 ## The reproduction contract
 
-The refactor is deliberately **bug-for-bug faithful**: `tests/test_regression.py` pins every peak
-age, peak value, test MAE and survival-model AUC transcribed from the notebooks' stored outputs,
-and all of them currently match to 1e-9.
+Two suites, both pinning to 1e-9, and neither may have a tolerance loosened to make a change pass:
 
-No defect is currently preserved. Never loosen a tolerance to make a change pass.
+- **`tests/test_age_only.py`** pins what is *published* — the numbers in README.md, the notebook
+  outputs and `mlb-aging train`. Every call uses the default spec.
+- **`tests/test_regression.py`** pins the **`tensor`** specification, transcribed from the
+  notebooks' stored outputs from before the default changed. Every call passes
+  `model_spec=TENSOR_SPEC` explicitly. It is the original bug-for-bug-faithful refactor contract
+  and it still holds unchanged; it just no longer describes the published results.
+
+No defect is currently preserved.
 
 ### Not bugs — three claims that did not survive checking
 
@@ -59,9 +65,9 @@ which *errors* matter. It did arrive as `evaluate()`'s silent default — the no
 
 | metric | PA-weighted (published) | G-weighted (matches the fit) | delta |
 |--------|------------------------|------------------------------|-------|
-| Def    | 4.7541                 | 4.7083                       | −0.96% |
-| Spd    | 0.9862                 | 0.9940                       | +0.80% |
-| WAR    | 1.4966                 | 1.4697                       | −1.80% |
+| Def    | 4.8156                 | 4.7724                       | −0.90% |
+| Spd    | 0.9961                 | 1.0040                       | +0.80% |
+| WAR    | 1.4970                 | 1.4719                       | −1.67% |
 
 The argument *for* G — that Def and Spd accrue in the field, not at the plate, so PA discounts the
 defensive replacement and the pinch runner — is sound in principle but nearly inert here: the test
@@ -103,12 +109,34 @@ notebook — add a metric here, not by duplicating a code path.
 
 ```python
 feature_cols = ["Age", career_mean_col, "experience", lag_col]
-GAM(te(0, 2, n_splines=5) + s(1, n_splines=5) + s(3, n_splines=5))
+GAM(s(0, n_splines=5) + s(1, n_splines=5) + s(3, n_splines=5))          # DEFAULT_SPEC
+GAM(te(0, 2, n_splines=5) + s(1, n_splines=5) + s(3, n_splines=5))      # TENSOR_SPEC
 ```
 
-`te(0, 2)` is the age × experience tensor product, `s(1)` the career-mean talent control, `s(3)`
-the lagged prior season. The term indices are positional into `feature_cols`, so **reordering that
-list silently changes the model.**
+`s(1)` is the career-mean talent control and `s(3)` the lagged prior season in both. The term
+indices are positional into `feature_cols`, so **reordering that list silently changes the model.**
+`experience` stays in `feature_cols` under the default even though no term reads it — dropping it
+would shift `s(3)` onto the wrong column.
+
+### `age_only` is the default; `tensor` is kept and still tested
+
+`gam.DEFAULT_SPEC` is `AGE_ONLY_SPEC`. The tensor was the original specification and scores
+marginally better (0.2–1.4pp against the naive baseline, except WAR+IPW where age-only wins by
+0.6pp), but tracing a curve from it requires pinning experience, and `aging_curve` pins
+`experience = floor(age) - 20` — a debut at 20, which describes 43 of ~2300 training players
+against 428 at the modal debut of 24. Retracing the same fitted model at debut 24 moves the peak
+one to three years (Def 23.0 to 26.0). One metric then has no single peak age, which is the
+question an aging curve exists to answer, so the accuracy was traded away deliberately.
+
+Two consequences worth knowing, both measured in `curve_validation.ipynb`:
+
+- **The traced tensor curve is a sawtooth.** `aging_curve` pins experience *and* the lag as step
+  functions of `floor(age)`, so the surface falls within each integer age and jumps at the
+  boundary (WAR: 1.7929 at 24.99, 1.8721 at 25.05). `argmax` therefore chooses among ~20 step
+  edges and every tensor peak is an integer. Its apparent perfect stability under resampling is
+  that quantization, not precision.
+- **`age_only` is not more reproducible.** That was the hoped-for second argument and it did not
+  materialise; the case for the default rests on debut-invariance alone.
 
 ### `load_data` ordering is load-bearing
 
@@ -130,6 +158,16 @@ reference shifts the curve **level only — it never moves the peak age.** The n
 inconsistent here (all-player wRC+ pins 100; every top-player section uses the training mean),
 which is why the reference is overridable per run.
 
+### Def has no locatable peak, and Spd's is the left edge of the data
+
+Neither metric's "peak age" should be quoted. Def's curve nominally turns at 21.99, but the rise
+from the youngest fitted age is only +0.098 runs and refitting on random halves of the players
+scatters it from 21.0 to 25.0 with half the resamples returning the left edge (3-4 year spread,
+`peak_stability` in `diagnostics.py`). Combined with the 3-year debut swing and a residual profile
+that is a flat offset rather than a bend, the conclusion is that Def's peak is not measurable at
+this sample size — a resolution problem no change of specification addresses. Say "defense
+declines from the start of a major-league career".
+
 ### Spd's "peak" is the left edge of the data, not a turning point
 
 `add_lag` drops every player's first season, so no age-20 row reaches the model and the fitted
@@ -139,11 +177,12 @@ The number 21 is correct and pinned; the word *peak* is what would be wrong. Say
 already declining at the youngest age observed" — its true maximum is outside the data.
 
 `AgingCurve.peaks_at_left_edge` reports this, and `GAM.ipynb` prints it for all five metrics.
-The other four are genuine interior maxima (rise to peak: OPS +0.05, wRC+ +13.66, Def +0.45,
-WAR +0.77).
+Def's is nominal (rise +0.098, and a 3-4 year spread under resampling); OPS (+0.048),
+wRC+ (+12.32) and WAR (+0.485) are genuine interior maxima.
 
 ### `AgingCurve.ages` is a mesh, not a sorted sweep
 
+This applies to `TENSOR_SPEC` only; `s(0)` yields a sorted 1000-row sweep.
 `generate_X_grid(term=0)` on the `te(0, 2)` tensor returns an `n x n` mesh, so `ages` holds
 1,000,000 rows with each age repeated and **is not monotonic** — `np.interp` against it directly
 returns nonsense. Every non-age feature is pinned before prediction, so the repeats are exact
@@ -179,7 +218,7 @@ identical row ordering; the id-based version is verified equivalent by the regre
 `run_metric`'s `elite_threshold` restricts *training*; `test_threshold` restricts *scoring*.
 `elite_test=True` is the special case where they are equal. GAM_top's prose needs all three
 shapes: a model trained and scored on everyone, the same model scored only on elites (this is
-where wRC+ 19.72 → 20.47 comes from), and a specialist model trained and scored on elites.
+where wRC+ 19.77 → 20.56 comes from), and a specialist model trained and scored on elites.
 
 ### Baselines give the improvement claims a denominator
 
@@ -194,18 +233,18 @@ the convention used by `IPWComparison.mae_improvement`, the CLI and the README a
 
 | metric | gam | gam + ipw |
 |--------|-----|-----------|
-| OPS    | +7.5% | +8.8% |
-| wRC+   | +6.2% | +7.4% |
-| Spd    | +3.6% | +4.1% |
-| WAR    | +0.2% | +3.7% |
-| Def    | **−4.9%** | **−2.8%** |
+| OPS    | +7.1% | +8.7% |
+| wRC+   | +6.0% | +7.3% |
+| Spd    | +2.6% | +3.3% |
+| WAR    | +0.2% | +4.3% |
+| Def    | **−6.3%** | **−4.3%** |
 
 **Def losing is a real result, not a bug** — `test_gam_improvement_over_delta_lag` pins the
 negative numbers so they cannot be quietly tuned away. It holds under G weighting too
-(−4.7% / −2.4%). Individual-season MAE and population curve *shape* are different targets;
+(−6.1% / −4.0%). Individual-season MAE and population curve *shape* are different targets;
 the defensive curve can still be the better shape estimate. WAR's split matters too: the GAM
 alone is a coin flip, so essentially all of WAR's gain is the survivorship correction. And
-plain `persistence` is within ~1.5% of `delta_lag` everywhere — most apparent accuracy on this
+plain `persistence` is within ~1.7% of `delta_lag` everywhere — most apparent accuracy on this
 task is just "last season predicts this season."
 
 The old `delta_method.ipynb` numbers (OPS 0.0876, wRC+ 22.47) were **not** comparable to the
@@ -231,6 +270,10 @@ notebooks show, so their format lives in one place.
   duplicated helper block is gone, so there is one implementation and it is the tested one.
 - `delta_method.ipynb` (30 -> 9 cells) is now the baseline comparison, not a superseded
   alternative: it is what the GAM's improvement claims are measured against.
+- `curve_validation.ipynb` asks whether the curves are trustworthy at all: residuals by age,
+  sensitivity to the debut assumption, the `age_only` vs `tensor` comparison, and peak
+  reproducibility under player-level resampling. It is where the case for the current default
+  is argued and where Def's peak is shown to be unmeasurable.
 - `data/outside_data.csv` has a different FanGraphs-export schema and is unused.
 
 ### The fetch stage does not work

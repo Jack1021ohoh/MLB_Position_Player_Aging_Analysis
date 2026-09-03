@@ -17,14 +17,17 @@ N_SPLINES = 5
 CURVE_POINTS = 1000
 
 
-#: The model specification used for the published results.
+#: Age x experience tensor product. The original specification, kept because
+#: it scores marginally better and because the regression suite pins it.
 TENSOR_SPEC = "tensor"
-#: Age-only smooth, matching standard aging-curve practice.
+#: Smooth on age alone -- standard aging-curve practice, and the default.
 AGE_ONLY_SPEC = "age_only"
 MODEL_SPECS = (TENSOR_SPEC, AGE_ONLY_SPEC)
+#: What every published number is fitted with.
+DEFAULT_SPEC = AGE_ONLY_SPEC
 
 
-def build_gam(model_spec: str = TENSOR_SPEC) -> GAM:
+def build_gam(model_spec: str = DEFAULT_SPEC) -> GAM:
     """The model specification. Terms are rebuilt per call, never shared.
 
     Term indices refer to positions in :attr:`MetricSpec.feature_cols`, so both
@@ -69,7 +72,7 @@ def fit_gam(
     spec: MetricSpec,
     weights: np.ndarray | None = None,
     progress: bool = False,
-    model_spec: str = TENSOR_SPEC,
+    model_spec: str = DEFAULT_SPEC,
 ) -> GAM:
     """Fit the GAM, grid-searching the smoothing penalty.
 
