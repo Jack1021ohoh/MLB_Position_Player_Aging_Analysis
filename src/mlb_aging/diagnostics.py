@@ -30,10 +30,13 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from pygam import GAM
+from pygam.utils import flatten
 
 from mlb_aging.dataset import DEFAULT_DATA_DIR, build_training_frame, load_data
 from mlb_aging.evaluate import inference
-from mlb_aging.gam import AgingCurve, aging_curve, fit_gam
+from mlb_aging.ipw import fit_ipw_weights
+from mlb_aging.gam import TENSOR_SPEC, AgingCurve, aging_curve, fit_gam
 from mlb_aging.metrics import MetricSpec
 
 #: Bin edges chosen so every bin holds enough test rows to mean something.
@@ -97,12 +100,60 @@ def residuals_by_age(
     return ResidualProfile(spec=spec, label=label, table=table)
 
 
+@dataclass(frozen=True)
+class SplitFit:
+    """One curve fitted on one subset of the training data."""
+
+    label: str
+    curve: AgingCurve
+    #: The fitted model, kept so the grid-searched ``lam`` is inspectable.
+    gam: GAM
+    n_rows: int
+    n_players: int
+
+    @property
+    def peak_age(self) -> float:
+        return float(self.curve.peak_age)
+
+    @property
+    def lam(self) -> float:
+        """The selected smoothing penalty.
+
+        ``LAM_GRID`` is one-dimensional, so ``gridsearch`` broadcasts a single
+        value across every term and this scalar is the whole selection.
+        """
+        return float(flatten(self.gam.lam)[0])
+
+
+def _fit_subset(
+    frame: pd.DataFrame,
+    spec: MetricSpec,
+    label: str,
+    model_spec: str = TENSOR_SPEC,
+    use_ipw: bool = False,
+) -> SplitFit:
+    """Fit and trace one subset. IPW is refit *within* the subset, not reused."""
+    weights = None
+    if use_ipw:
+        weights = fit_ipw_weights(frame, spec)["ipw_final_weight"].values
+    gam = fit_gam(frame, spec, weights=weights, model_spec=model_spec)
+    return SplitFit(
+        label=label,
+        curve=aging_curve(gam, frame, spec),
+        gam=gam,
+        n_rows=len(frame),
+        n_players=int(frame["IDfg"].nunique()),
+    )
+
+
 def era_curves(
     spec: MetricSpec,
     eras: dict[str, tuple[int, int]],
+    model_spec: str = TENSOR_SPEC,
+    use_ipw: bool = False,
     data_dir: Path | str = DEFAULT_DATA_DIR,
-) -> dict[str, tuple[AgingCurve, int]]:
-    """Refit and retrace the curve on each era. Returns ``{label: (curve, n)}``."""
+) -> dict[str, SplitFit]:
+    """Refit and retrace the curve on each era."""
     train_data, _ = load_data(spec, data_dir=data_dir)
 
     out = {}
@@ -111,29 +162,70 @@ def era_curves(
             (train_data["Season"] >= start) & (train_data["Season"] <= end), :
         ]
         frame = build_training_frame(subset, spec)
-        curve = aging_curve(fit_gam(frame, spec), frame, spec)
-        out[label] = (curve, len(frame))
+        out[label] = _fit_subset(frame, spec, label, model_spec, use_ipw)
     return out
 
 
 def random_split_curves(
     spec: MetricSpec,
     seed: int = 0,
+    model_spec: str = TENSOR_SPEC,
+    use_ipw: bool = False,
     data_dir: Path | str = DEFAULT_DATA_DIR,
-) -> tuple[AgingCurve, AgingCurve]:
+) -> tuple[SplitFit, SplitFit]:
     """Split players (not rows) at random into halves and fit each.
 
     The control for :func:`era_curves`: each era holds half the data, and a
     half-sized sample moves the peak on its own. An era difference is only an
     era *effect* if it exceeds what this produces.
+
+    Splitting on ``IDfg`` rather than on rows keeps a player's seasons together,
+    so the two halves are independent. Splitting rows would put the same player
+    on both sides and understate the spread.
     """
     train_data, _ = load_data(spec, data_dir=data_dir)
     ids = train_data["IDfg"].unique().copy()
     np.random.default_rng(seed).shuffle(ids)
     half = set(ids[: len(ids) // 2])
 
-    curves = []
-    for mask in (train_data["IDfg"].isin(half), ~train_data["IDfg"].isin(half)):
-        frame = build_training_frame(train_data.loc[mask, :], spec)
-        curves.append(aging_curve(fit_gam(frame, spec), frame, spec))
-    return curves[0], curves[1]
+    in_half = train_data["IDfg"].isin(half)
+    return tuple(
+        _fit_subset(
+            build_training_frame(train_data.loc[mask, :], spec),
+            spec,
+            label=f"seed {seed} {name}",
+            model_spec=model_spec,
+            use_ipw=use_ipw,
+        )
+        for name, mask in (("A", in_half), ("B", ~in_half))
+    )
+
+
+def peak_stability(
+    spec: MetricSpec,
+    seeds: tuple[int, ...] = (0, 1, 2, 3),
+    model_spec: str = TENSOR_SPEC,
+    use_ipw: bool = False,
+    data_dir: Path | str = DEFAULT_DATA_DIR,
+) -> pd.DataFrame:
+    """Peak age from every random half, one row per half-sample fit.
+
+    Columns: ``seed``, ``half``, ``peak_age``, ``lam``, ``n_rows``,
+    ``n_players``. The spread of ``peak_age`` is the resolution of the peak
+    estimate; the paired gap within a seed is the noise floor an era difference
+    has to clear.
+    """
+    rows = []
+    for seed in seeds:
+        for half, fit in zip("AB", random_split_curves(
+            spec, seed=seed, model_spec=model_spec, use_ipw=use_ipw, data_dir=data_dir
+        )):
+            rows.append({
+                "seed": seed,
+                "half": half,
+                "peak_age": fit.peak_age,
+                "lam": fit.lam,
+                "n_rows": fit.n_rows,
+                "n_players": fit.n_players,
+            })
+    return pd.DataFrame(rows)
