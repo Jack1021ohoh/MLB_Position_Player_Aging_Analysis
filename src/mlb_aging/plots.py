@@ -107,3 +107,65 @@ def plot_residuals_by_age(
     if any(p.label for p in profiles):
         ax.legend()
     return ax
+
+
+def plot_curves_against_truth(
+    curves: dict[str, tuple[np.ndarray, np.ndarray]],
+    truth_ages: np.ndarray,
+    truth_values: np.ndarray,
+    title: str,
+    ax: plt.Axes | None = None,
+) -> plt.Axes:
+    """Estimated curves over the known truth, all centred on their own mean.
+
+    Every estimated level is arbitrary -- ``aging_curve`` pins the career mean at a
+    reference and the delta method's cumulative sum starts from zero -- so only shape is
+    comparable, and centring is what makes the picture honest rather than flattering.
+    """
+    if ax is None:
+        _, ax = plt.subplots(figsize=(8, 5))
+
+    centred_truth = truth_values - truth_values.mean()
+    ax.plot(truth_ages, centred_truth, color="black", linewidth=3, label="truth", zorder=5)
+    ax.axvline(truth_ages[np.argmax(truth_values)], color="black", linestyle=":", linewidth=1)
+
+    # Distinct dash patterns, because near-identical arms would otherwise hide each other:
+    # two curves agreeing to within a line width is a *result*, and it has to stay visible.
+    # Widths taper so an overlapping later curve reads as a dash over a thicker solid line.
+    styles = [("-", 3.0), ("--", 2.2), ("-.", 1.8), (":", 1.8), ((0, (5, 1)), 1.5)]
+    for index, (label, (ages, values)) in enumerate(curves.items()):
+        dash, width = styles[index % len(styles)]
+        resampled = np.interp(truth_ages, ages, values)
+        ax.plot(
+            truth_ages, resampled - resampled.mean(),
+            linestyle=dash, linewidth=width, alpha=0.9, label=label,
+        )
+
+    ax.set_xlabel("Age")
+    ax.set_ylabel("centred value")
+    ax.set_title(title)
+    ax.set_xticks(AGE_TICKS)
+    ax.grid(True)
+    ax.legend(fontsize=8)
+    return ax
+
+
+def plot_peak_error_by_arm(study, ax: plt.Axes | None = None, title: str | None = None):
+    """Distribution of peak-age error across replicates, one box per arm.
+
+    The zero line is the truth. A box sitting wholly off it is a bias the estimator has
+    regardless of sample noise -- which is the distinction a single fit cannot draw.
+    """
+    if ax is None:
+        _, ax = plt.subplots(figsize=(9, 4.5))
+
+    arms = list(dict.fromkeys(study["arm"]))
+    data = [study.loc[study["arm"] == arm, "peak_age_error"].values for arm in arms]
+
+    ax.boxplot(data, tick_labels=arms, showmeans=True)
+    ax.axhline(0.0, color="black", lw=1.2, ls="--", zorder=0)
+    ax.set_ylabel("peak age error (years)")
+    ax.set_title(title or "Recovered peak minus the true peak")
+    ax.grid(True, axis="y")
+    ax.tick_params(axis="x", rotation=20)
+    return ax
