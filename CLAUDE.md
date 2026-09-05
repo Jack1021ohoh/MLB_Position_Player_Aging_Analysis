@@ -16,7 +16,7 @@ migrated onto it; see **Migration state** below for what has and hasn't moved.
 ```bash
 uv sync --all-extras                               # builds .venv from uv.lock
 
-.venv/bin/python -m pytest tests/ -q              # full regression suite, 83 tests (~3min)
+.venv/bin/python -m pytest tests/ -q              # full suite, 103 tests (~1m40s)
 .venv/bin/python -m pytest tests/ -q -k IPW       # one group
 .venv/bin/python -m pytest tests/test_regression.py::test_all_player_curves -q
 
@@ -41,7 +41,7 @@ old versions is needed.
 
 ## The reproduction contract
 
-Two suites, both pinning to 1e-9, and neither may have a tolerance loosened to make a change pass:
+Two suites pin numbers to 1e-9, and neither may have a tolerance loosened to make a change pass:
 
 - **`tests/test_age_only.py`** pins what is *published* — the numbers in README.md, the notebook
   outputs and `mlb-aging train`. Every call uses the default spec.
@@ -49,6 +49,12 @@ Two suites, both pinning to 1e-9, and neither may have a tolerance loosened to m
   notebooks' stored outputs from before the default changed. Every call passes
   `model_spec=TENSOR_SPEC` explicitly. It is the original bug-for-bug-faithful refactor contract
   and it still holds unchanged; it just no longer describes the published results.
+
+A third suite, **`tests/test_simulate.py`**, pins no published number. It covers the simulation
+study: the generator's determinism, its calibration against the real sample, and — load-bearing —
+that a smooth on age alone recovers a *known* peak on a clean panel. If that fails, nothing in
+`simulation_validation.ipynb` is readable. It also pins one deliberate **failure**
+(`test_ipw_weight_dispersion_is_a_known_gap`); see "The simulation cannot evaluate IPW" below.
 
 No defect is currently preserved.
 
@@ -94,6 +100,14 @@ The one real property to keep in mind is that a row's own season is included in 
 (~20% of it at the median 5 rows per player). No test target leaks, so test scores are honest; the
 cost is that the career-mean/target relationship is stronger in training than at test. Leave-one-out
 or a shrunk estimate is the standard alternative, worth measuring before adopting.
+
+There is now a measured reason to want that. The career mean is also a **post-treatment control**:
+it averages a player over the seasons he actually played, so it encodes *which ages those were* and
+reaches into the age effect it is meant to hold constant. On a clean simulated panel — no
+censoring, no selective survival, and a *noiseless* career mean — adding `s(1)` moves the recovered
+peak from 27.32 to 28.08 against a true 26.99. It still earns its place by a wide margin (dropping
+it costs +2.87 years and destroys the curve's shape), but it is not free, and a shrunk estimate now
+has a target to beat.
 
 ## Architecture
 
@@ -164,9 +178,16 @@ Neither metric's "peak age" should be quoted. Def's curve nominally turns at 21.
 from the youngest fitted age is only +0.098 runs and refitting on random halves of the players
 scatters it from 21.0 to 25.0 with half the resamples returning the left edge (3-4 year spread,
 `peak_stability` in `diagnostics.py`). Combined with the 3-year debut swing and a residual profile
-that is a flat offset rather than a bend, the conclusion is that Def's peak is not measurable at
-this sample size — a resolution problem no change of specification addresses. Say "defense
-declines from the start of a major-league career".
+that is a flat offset rather than a bend, the conclusion is that Def's peak is not measurable.
+Say "defense declines from the start of a major-league career".
+
+**The reason is not only sample size.** That was inferred from resampling scatter and is half
+right. `simulation_validation.ipynb` assigns Def a peak the estimator is never told and asks
+whether it is found: reliably at an assigned peak of 22 (hit rate 0.7-0.9 within a year), poorly at
+24 (0.2-0.3) and 26 (0.4-0.5). Crucially, making the peak **eight times taller changes nothing** —
+the hit rate is flat across `rise_scale` 0.5 to 4.0 at every assigned age. A pure resolution problem
+would ease as the signal grows. A systematic component is present that more data would not remove,
+and it is the same specification bias the career-mean note above describes.
 
 ### Spd's "peak" is the left edge of the data, not a turning point
 
@@ -261,6 +282,79 @@ Don't resurrect them.
 data. `AgingResult.summary()` and `IPWComparison.summary()` produce the printed lines the
 notebooks show, so their format lives in one place.
 
+### `simulate.py` grades the estimators against a curve it wrote down
+
+Test MAE cannot rank aging curves — the `diagnostics.py` docstring says why — and the true curve
+is never observed, so every score on real data is a proxy. `simulate.py` removes that constraint:
+generate careers from a known curve, censor at `qual=100`, and hand the result to the same
+`gam`/`ipw`/`baselines` code. Distance to the truth is then computable.
+
+`MetricSim` is the one new abstraction, shaped after `MetricSpec`, and adds a single axis — `kind`:
+
+- **`rate`** (OPS, wRC+, Spd): the value *is* the rate; playing time enters only its noise, whose
+  variance falls as 1/n.
+- **`accumulating`** (Def, WAR): the value is `rate x G`, so playing time is a **factor** of the
+  target and censoring on it cuts the target directly.
+
+That split was **measured, not assumed**. De-meaned within player, Def and WAR spread out as games
+rise (high-G/low-G residual SD ratio 1.73 and 1.60) while OPS, wRC+ and Spd tighten (0.73, 0.69,
+0.81). Spd is a 0-10 rate that happens to be G-weighted in the fit — it does not accumulate.
+
+Scored on the literature's metrics, not invented ones: curve-versus-curve MAE (Nguyen & Matthews
+2024), RMSE, and **SBD** (Paparrizos & Gravano 2015), implemented as published — sliding over every
+shift, z-normalised. `shape_corr_distance` is SBD's zero-lag term, kept as a *labelled deviation*
+because SBD's shift-invariance forgives a wrong peak age. `peak_age_error` is ours, not the
+literature's, and is reported last. Do not lead with it — it reverses the conclusion all three
+published metrics support.
+
+Four constants cannot be measured from censored data and are solved against observable moments by
+`calibrate()`. Everything else is measured off `hitter_train_data.csv`.
+
+### The simulation cannot evaluate IPW
+
+`test_ipw_weight_dispersion_is_a_known_gap` pins this so it cannot be forgotten. Simulated
+`ipw_weight` has SD ~0.18 against ~0.43 on real data, and that spread is IPW's entire leverage —
+it works by upweighting the seasons least likely to be seen again. Consequence: IPW moves the real
+curve 3.6-12.1% of its range and shifts WAR's peak a full year (27.01 to 26.00); in simulation it
+moves the curve 0.6-2.3% and shifts WAR's peak by 0.000.
+
+Diagnosed, not guessed. Survival there depends on talent, which `fit_retirement_model` never sees
+(so that variation is unlearnable and adds no spread), and on playing time, which it does see but
+which cannot be strengthened without halving career length. It does not depend on last season's
+performance, which the real retirement model takes as `perf_col` and is built around.
+
+**One repair was tried and reverted.** Making survival depend on recent form raised the weight
+spread to 0.28 but made the curve-displacement mismatch *worse* on two metrics, with
+`survival_boost`, `survival_on_talent` and `survival_on_recent_form` all pinned at their bounds —
+so the constraint is the survival model's single-population form, not its tuning. And the target
+was wrong: calibrate against IPW's **curve displacement** (11.2% on wRC+, measurable on real data),
+not `sd(ipw_weight)`, which is a proxy that does not track it.
+
+### What the simulation established, and what it did not
+
+Findings, none of which touch the survival model:
+
+- The GAM beats the delta method on curve shape in 9-10 replicates of 10 on four of five metrics,
+  1.6-2.5x lower SBD. That claim previously rested only on per-season MAE.
+- **Def losing on MAE while winning on shape is now measured** (9/10), not asserted — see the
+  baselines note above, which had only reasoning behind it.
+- The published spec reads the peak ~1 year late, and ablation attributes it to specification
+  rather than survivorship: switching off both the qualification cut and selective survival leaves
+  the bias intact.
+
+Limits that matter:
+
+- Everything is computed on simulated data. **Relative comparisons travel; absolute numbers do
+  not** — both arms of any comparison see identical data, so a generator flaw hits them equally.
+  No peak-bias figure should be quoted about real players.
+- The assigned truth's flatness was checked against the real curves and matches for wRC+ (1.81
+  years within 1% of the max, against 1.90 simulated) and OPS; Def and Spd are *sharper* in
+  reality. Only WAR is meaningfully flatter in reality, so the plateau caveat applies to WAR alone.
+- **A real-data falsification check is not in the notebook and should be.** The simulation predicts
+  the GAM should read the peak later than the delta method; on real data it does, by ~1.0 years on
+  OPS, wRC+ and WAR. But the predicted *magnitude* is roughly twice the real gap on wRC+, and the
+  sign is wrong on Def and Spd. Run before letting the peak-late finding touch README numbers.
+
 ## Migration state
 
 - **Ported:** everything the three GAM notebooks did — the helper block, GAM fitting, curve
@@ -274,6 +368,8 @@ notebooks show, so their format lives in one place.
   sensitivity to the debut assumption, the `age_only` vs `tensor` comparison, and peak
   reproducibility under player-level resampling. It is where the case for the current default
   is argued and where Def's peak is shown to be unmeasurable.
+- `simulation_validation.ipynb` (23 cells, ~4m20s) asks the question no real-data check can:
+  whether the estimators recover a curve that is known by construction. See below.
 - `data/outside_data.csv` has a different FanGraphs-export schema and is unused.
 
 ### The fetch stage does not work
@@ -297,7 +393,8 @@ Re-run them with:
 ```bash
 .venv/bin/python -m jupyter nbconvert --to notebook --execute --inplace \
     --ExecutePreprocessor.timeout=3600 \
-    GAM.ipynb GAM_top.ipynb GAM_IPW.ipynb delta_method.ipynb curve_validation.ipynb
+    GAM.ipynb GAM_top.ipynb GAM_IPW.ipynb delta_method.ipynb curve_validation.ipynb \
+    simulation_validation.ipynb
 ```
 
 **Do not set `MPLBACKEND=Agg`.** It overrides the kernel's inline backend, so `plt.show()`
@@ -312,7 +409,9 @@ for f in sys.argv[1:]:
     nb = json.load(open(f))
     n = sum('image/png' in o.get('data', {}) for c in nb['cells'] for o in c.get('outputs', []))
     print(f, 'figures =', n)
-" GAM.ipynb GAM_top.ipynb GAM_IPW.ipynb delta_method.ipynb curve_validation.ipynb
+" GAM.ipynb GAM_top.ipynb GAM_IPW.ipynb delta_method.ipynb curve_validation.ipynb \
+  simulation_validation.ipynb
 ```
 
-Expected: GAM 5, GAM_top 7, GAM_IPW 5, delta_method 1, curve_validation 1.
+Expected: GAM 5, GAM_top 7, GAM_IPW 5, delta_method 1, curve_validation 1,
+simulation_validation 2.
