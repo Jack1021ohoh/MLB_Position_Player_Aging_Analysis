@@ -108,6 +108,18 @@ comparison cannot drift through differing row sets:
 `delta_lag` is the reference the GAM is quoted against. It is the strongest of the three and the
 only one that sees the same information the GAM does — the player's prior season and their age.
 Quoting against a weaker arm would flatter the model.
+#### 5. Validation Against a Known Truth
+
+Test MAE cannot rank aging curves — `persistence` carries no age term at all yet nearly wins —
+and the true curve is never observed, so every score computed on real data is a proxy.
+
+[simulation_validation.ipynb](simulation_validation.ipynb) removes that constraint. Careers are
+generated from a curve written down in `simulate.py`, censored at `qual=100`, and handed to the
+same fitting code that produces the published results, so distance to the truth is computable.
+Estimates are scored on the aging-curve literature's own metrics — curve-versus-curve MAE
+(Nguyen & Matthews 2024), RMSE, and shape-based distance (Paparrizos & Gravano 2015) — and the
+generator is calibrated against 18 moments of the real training frame.
+
 ## Project Structure
 
 ```
@@ -122,6 +134,7 @@ MLB_Position_Player_Aging_Analysis/
 │   ├── dataset.py               # Loading and the train/test split
 │   ├── gam.py                   # Model spec, fitting, curve tracing
 │   ├── ipw.py                   # Survival model and IPW weights
+│   ├── simulate.py              # Synthetic careers with a known aging curve
 │   ├── diagnostics.py           # Residuals by age, era and random-split refits
 │   ├── evaluate.py              # Weighted test scoring
 │   ├── pipeline.py              # End-to-end runs and IPW comparisons
@@ -130,12 +143,14 @@ MLB_Position_Player_Aging_Analysis/
 │   └── cli.py                   # The `mlb-aging` command
 ├── tests/
 │   ├── test_regression.py       # Pins the tensor specification's results to 1e-9
+│   ├── test_simulate.py         # Pins the generator and the simulation's validity
 │   └── test_age_only.py         # Pins the published (age-only) results to 1e-9
 ├── GAM.ipynb                    # Aging curves for all players
 ├── curve_validation.ipynb       # Are the curves trustworthy? Residuals, debut sensitivity, resampling
 ├── GAM_top.ipynb                # Aging curves for elite players
 ├── GAM_IPW.ipynb                # IPW survivorship bias correction
 ├── delta_method.ipynb           # Naive baseline the GAM is compared against
+├── simulation_validation.ipynb  # Can the estimators recover a curve we already know?
 ├── pyproject.toml
 ├── uv.lock                      # Exact pinned resolution
 └── README.md
@@ -175,6 +190,7 @@ reproduce exactly on pandas 3.0.5, numpy 2.5.2, pygam 0.12.0 and scikit-learn 1.
 | [GAM_IPW.ipynb](GAM_IPW.ipynb) | IPW-corrected curves and the survivorship-bias impact per metric |
 | [delta_method.ipynb](delta_method.ipynb) | The naive delta-method baseline, and how much the GAM improves on it |
 | [curve_validation.ipynb](curve_validation.ipynb) | Whether the curves are trustworthy: residuals by age, sensitivity to the debut assumption, and peak reproducibility under resampling |
+| [simulation_validation.ipynb](simulation_validation.ipynb) | Whether the estimators recover a curve that is known by construction, scored on the literature's own metrics |
 
 Point the notebook kernel at the project venv, then run top to bottom.
 
@@ -319,10 +335,37 @@ Three honest caveats belong with these numbers:
   G-weighted). It does not invalidate the defensive aging curve: individual-season MAE and
   population curve *shape* are different targets, and season-to-season defensive value is
   volatile enough that "last year, age-adjusted" is hard to beat one player-season at a time.
+  This is now measured rather than asserted: against a known truth, the GAM's Def curve beats
+  `delta_lag` on shape in 9 of 10 simulated leagues while still losing on per-season MAE.
 - **WAR's gain is almost entirely IPW,** not the GAM — the strongest single piece of evidence
   for the survivorship correction in this project.
 - **Persistence alone is within ~1.7% of `delta_lag` everywhere.** Most apparent accuracy on
   this task is simply that last season predicts this season.
+
+### Curve Recovery Against a Known Truth
+
+Per-season accuracy and curve accuracy are different questions, and only the first is
+measurable on real data. Simulated leagues — calibrated to 18 moments of the real training
+frame — make the second one computable. Replicates won out of 10, on shape-based distance:
+
+| Metric | GAM beats delta method | career mean beats no control |
+|--------|------------------------|------------------------------|
+| OPS    | 9/10                   | 10/10 |
+| wRC+   | **10/10**              | 10/10 |
+| Spd    | 4/10                   | 5/10  |
+| Def    | 9/10                   | 9/10  |
+| WAR    | 9/10                   | 10/10 |
+
+- **The GAM is the better curve estimator**, with 1.6–2.5× lower shape distance on four of five
+  metrics (OPS 1.6×, Def 2.0×, wRC+ 2.2×, WAR 2.5×). Until now that claim rested entirely on
+  per-season MAE, which cannot rank curves.
+- **Def loses on MAE and wins on shape**, confirming the caveat above.
+- **The peak reads about a year late**, and switching the survivorship mechanisms off leaves the
+  bias intact — it comes from the career mean acting as a post-treatment control, not from
+  selection. This is simulation-conditional and no published number has been changed on it.
+- **IPW cannot be assessed this way.** The generator's survival weights are far too uniform
+  (SD 0.18 against a real 0.43), so the correction has nothing to reweight. The notebook records
+  the diagnosis and a failed attempt at a fix.
 
 ### Elite Players
 
@@ -357,6 +400,7 @@ being the population curve shifted up.
 - Examine modern era (2015+) vs. historical aging differences
 - Develop injury-adjusted aging models
 - Extend IPW to non-qualified player seasons to capture the full distribution of aging outcomes
+- Give the simulator's survival model a two-population form (established regulars vs. fringe players) so IPW becomes evaluable against a known truth
 - Create interactive visualization dashboard
 
 ## License
